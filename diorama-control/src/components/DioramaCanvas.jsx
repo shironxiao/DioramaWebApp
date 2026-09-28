@@ -1,6 +1,7 @@
 import React, { useEffect, useRef } from 'react';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
+import { STLLoader } from 'three/examples/jsm/loaders/STLLoader.js';
 
 export default function DioramaCanvas({
   lightsOn = true,
@@ -19,6 +20,7 @@ export default function DioramaCanvas({
   const fountainParticlesRef = useRef([]);
   const plazaMeshRef = useRef(null);
   const fountainMeshRef = useRef(null);
+  const customStlMeshRef = useRef(null);
   const gateRef = useRef(null);
 
   useEffect(() => {
@@ -42,7 +44,7 @@ export default function DioramaCanvas({
     renderer.setSize(width, height);
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     renderer.shadowMap.enabled = true;
-    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    renderer.shadowMap.type = THREE.PCFShadowMap;
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
     renderer.toneMappingExposure = 1.1;
 
@@ -242,6 +244,42 @@ export default function DioramaCanvas({
     dioramaGroup.add(createFountain(0, -3.8));
     dioramaGroup.add(createFountain(0, 3.8));
 
+    // --- LOAD CLASSMATE'S CUSTOM 3D STL MODEL ---
+    const stlLoader = new STLLoader();
+    stlLoader.load(
+      '/fountainFinal.stl',
+      (geometry) => {
+        geometry.computeVertexNormals();
+        geometry.center();
+
+        geometry.computeBoundingBox();
+        const bbox = geometry.boundingBox;
+        const sizeY = bbox.max.y - bbox.min.y;
+        const desiredHeight = 2.4;
+        const scaleFactor = desiredHeight / (sizeY || 1);
+
+        const stlMat = new THREE.MeshStandardMaterial({
+          color: new THREE.Color(fountainColor),
+          roughness: 0.3,
+          metalness: 0.2
+        });
+
+        const stlMesh = new THREE.Mesh(geometry, stlMat);
+        stlMesh.rotation.x = -Math.PI / 2;
+        stlMesh.scale.set(scaleFactor, scaleFactor, scaleFactor);
+        stlMesh.position.set(0, 1.8, 0);
+        stlMesh.castShadow = true;
+        stlMesh.receiveShadow = true;
+
+        customStlMeshRef.current = stlMesh;
+        dioramaGroup.add(stlMesh);
+      },
+      undefined,
+      (err) => {
+        console.log('STL load notice:', err);
+      }
+    );
+
     // Particles
     const particles = [];
     const particleGeo = new THREE.SphereGeometry(0.06, 6, 6);
@@ -251,7 +289,7 @@ export default function DioramaCanvas({
       opacity: 0.85
     });
 
-    [{ x: 0, z: -3.8 }, { x: 0, z: 3.8 }].forEach((fc) => {
+    [{ x: 0, z: -3.8 }, { x: 0, z: 3.8 }, { x: 0, z: 0 }].forEach((fc) => {
       for (let p = 0; p < 24; p++) {
         const particle = new THREE.Mesh(particleGeo, particleMat);
         particle.position.set(
@@ -275,8 +313,8 @@ export default function DioramaCanvas({
     // 7. Small Peg Figures
     [0xf4d068, 0xef7a7a, 0x7ebcf0, 0xb88ce8, 0xfa9e5c, 0x78cb96].forEach((color, i) => {
       const angle = (i / 6) * Math.PI * 2;
-      const fx = Math.cos(angle) * 1.3;
-      const fz = Math.sin(angle) * 1.3;
+      const fx = Math.cos(angle) * 1.8;
+      const fz = Math.sin(angle) * 1.8;
       const figGroup = new THREE.Group();
       figGroup.position.set(fx, 0.6, fz);
       const figMat = new THREE.MeshStandardMaterial({ color, roughness: 0.4 });
@@ -375,11 +413,11 @@ export default function DioramaCanvas({
     window.addEventListener('resize', handleResize);
 
     let frameId;
-    let clock = new THREE.Clock();
+    const startAnimTime = performance.now();
 
     const animate = () => {
       frameId = requestAnimationFrame(animate);
-      const time = clock.getElapsedTime();
+      const time = (performance.now() - startAnimTime) * 0.001;
 
       dioramaGroup.rotation.y = Math.sin(time * 0.15) * 0.05;
 
@@ -442,10 +480,13 @@ export default function DioramaCanvas({
     }
   }, [circleColor]);
 
-  // Update Fountain Water Color
+  // Update Fountain Water Color & Custom STL Mesh color
   useEffect(() => {
     if (fountainMeshRef.current) {
       fountainMeshRef.current.material.color.set(fountainColor);
+    }
+    if (customStlMeshRef.current) {
+      customStlMeshRef.current.material.color.set(fountainColor);
     }
   }, [fountainColor]);
 
