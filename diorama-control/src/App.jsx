@@ -10,9 +10,16 @@ import './App.css';
 
 function App() {
   const [activeTab, setActiveTab] = useState('home');
-  const [isLoggedIn, setIsLoggedIn] = useState(true);
-  const [user, setUser] = useState({ name: 'Ronald Sevilla' });
   const [toastMessage, setToastMessage] = useState(null);
+
+  // Persistent login — read saved session from localStorage
+  const [isLoggedIn, setIsLoggedIn] = useState(() => {
+    return localStorage.getItem('diorama_logged_in') === 'true';
+  });
+  const [user, setUser] = useState(() => {
+    const saved = localStorage.getItem('diorama_user');
+    return saved ? JSON.parse(saved) : { name: '' };
+  });
 
   // Shared application state
   const [appState, setAppState] = useState({
@@ -43,11 +50,16 @@ function App() {
   };
 
   const handleLogout = () => {
+    localStorage.removeItem('diorama_logged_in');
+    localStorage.removeItem('diorama_user');
     setIsLoggedIn(false);
+    setUser({ name: '' });
     showToast('Logged out of My Diorama');
   };
 
   const handleLoginSuccess = (userName) => {
+    localStorage.setItem('diorama_logged_in', 'true');
+    localStorage.setItem('diorama_user', JSON.stringify({ name: userName }));
     setUser({ name: userName });
     setIsLoggedIn(true);
     setActiveTab('home');
