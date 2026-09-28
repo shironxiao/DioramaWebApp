@@ -1,0 +1,235 @@
+.login-page-wrapper {
+  min-height: 90vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 40px 20px;
+  background-color: #f7f7f2;
+}
+
+.login-card-container {
+  width: 100%;
+  max-width: 440px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 24px;
+}
+
+.login-brand-header {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  text-align: center;
+}
+
+.login-sparkle-badge {
+  width: 54px;
+  height: 54px;
+  border-radius: 18px;
+  background: #e2f0e6;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #569670;
+  margin-bottom: 4px;
+}
+
+.login-brand-title {
+  font-size: 2rem;
+  font-weight: 700;
+  color: #1a241d;
+  letter-spacing: -0.02em;
+}
+
+.login-brand-subtitle {
+  font-size: 1.05rem;
+  color: #6e7e73;
+}
+
+/* Card Box */
+.login-card-box {
+  width: 100%;
+  background: #ffffff;
+  border-radius: 28px;
+  padding: 32px 28px;
+  border: 1px solid #e6e8e0;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.04), 0 1px 3px rgba(0, 0, 0, 0.02);
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.animate-slide-in {
+  animation: slideFadeIn 0.35s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes slideFadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(12px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.login-form-content {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.name-inputs-row {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 12px;
+}
+
+.input-field-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.input-label {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: #2d3b32;
+}
+
+.forgot-link {
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: #569670;
+  text-decoration: none;
+  transition: color 0.2s ease;
+}
+
+.forgot-link:hover {
+  color: #3b7352;
+  text-decoration: underline;
+}
+
+.input-with-icon {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.field-icon {
+  position: absolute;
+  left: 14px;
+  color: #9ab09f;
+  pointer-events: none;
+}
+
+.input-with-icon input {
+  width: 100%;
+  padding: 12px 14px 12px 42px;
+  border-radius: 14px;
+  border: 1px solid #dce2dc;
+  background: #ffffff;
+  font-size: 0.95rem;
+  color: #2d3b32;
+  outline: none;
+  transition: all 0.2s ease;
+}
+
+.input-with-icon input:focus {
+  border-color: #569670;
+  box-shadow: 0 0 0 3px rgba(86, 150, 112, 0.15);
+}
+
+.btn-eye-toggle {
+  position: absolute;
+  right: 12px;
+  background: transparent;
+  border: none;
+  color: #9ab09f;
+  cursor: pointer;
+  padding: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.btn-eye-toggle:hover {
+  color: #569670;
+}
+
+/* Checkbox Row & Space Between Alignment */
+.checkbox-row {
+  display: flex;
+  align-items: center;
+}
+
+.checkbox-row.space-between {
+  justify-content: space-between;
+}
+
+.custom-checkbox-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.88rem;
+  color: #5e6f63;
+  cursor: pointer;
+}
+
+.custom-checkbox-label input[type='checkbox'] {
+  accent-color: #569670;
+  width: 16px;
+  height: 16px;
+  cursor: pointer;
+}
+
+/* Submit Button */
+.btn-sage-submit {
+  width: 100%;
+  padding: 14px;
+  border-radius: 14px;
+  border: none;
+  background-color: #a8ccb5;
+  color: #1e3325;
+  font-size: 1rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.btn-sage-submit:hover {
+  background-color: #96be9f;
+  transform: translateY(-1px);
+}
+
+/* Footer Switch */
+.login-footer-switch {
+  text-align: center;
+  font-size: 0.9rem;
+  color: #6e7e73;
+  border-top: 1px solid #f0f2eb;
+  padding-top: 16px;
+}
+
+.switch-link-btn {
+  background: transparent;
+  border: none;
+  font-size: 0.9rem;
+  font-weight: 700;
+  color: #2d3b32;
+  cursor: pointer;
+}
+
+.switch-link-btn:hover {
+  color: #569670;
+  text-decoration: underline;
+}
+
+@media (max-width: 480px) {
+  .name-inputs-row {
+    grid-template-columns: 1fr;
+  }
+}

@@ -1,0 +1,271 @@
+.page-container {
+  width: 100%;
+  max-width: 900px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.section-breadcrumb {
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  color: #d9884e;
+  text-transform: uppercase;
+  margin-bottom: 4px;
+}
+
+.section-block {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.section-block-title {
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: #3b332b;
+}
+
+/* Lighting Modes Grid */
+.modes-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 12px;
+}
+
+.mode-card {
+  background: #ffffff;
+  border-radius: 18px;
+  padding: 16px 20px;
+  border: 1px solid #ebdcd0;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.mode-card:hover {
+  border-color: #d9884e;
+}
+
+.mode-card.selected {
+  border: 2px solid #d9884e;
+  background: #fdf8f4;
+  box-shadow: 0 4px 12px rgba(217, 136, 78, 0.1);
+}
+
+.mode-name {
+  font-size: 1.05rem;
+  font-weight: 700;
+  color: #2d261e;
+  margin-bottom: 4px;
+}
+
+.mode-desc {
+  font-size: 0.85rem;
+  color: #8c7e72;
+}
+
+/* Badges & Ranges */
+.icon-badge.amber {
+  background-color: #faede2;
+  color: #d9884e;
+}
+
+.slider.amber-toggle {
+  background-color: #d1d6cd;
+}
+
+input:checked + .slider.amber-toggle {
+  background-color: #d9884e;
+}
+
+.custom-range-slider.amber-range::-webkit-slider-thumb {
+  background: #d9884e;
+}
+
+.range-sub-labels {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.75rem;
+  color: #a39587;
+  margin-top: 4px;
+}
+
+/* Colors Grid */
+.colors-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 16px;
+}
+
+.color-picker-flex {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.color-swatch-box {
+  width: 56px;
+  height: 56px;
+  border-radius: 14px;
+  border: 1px solid rgba(0, 0, 0, 0.1);
+  box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.08);
+}
+
+.color-swatch-box.small {
+  width: 42px;
+  height: 42px;
+  border-radius: 10px;
+}
+
+.rgb-inputs-group {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.rgb-label-title {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: #8c7e72;
+}
+
+.rgb-fields-row {
+  display: flex;
+  gap: 8px;
+}
+
+.rgb-fields-row .field {
+  display: flex;
+  flex-direction: column;
+  font-size: 0.7rem;
+  color: #8c7e72;
+}
+
+.rgb-fields-row input {
+  width: 60px;
+  padding: 6px 8px;
+  border-radius: 10px;
+  border: 1px solid #e3d7cc;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: #2d261e;
+  outline: none;
+}
+
+.color-card-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-top: 8px;
+  border-top: 1px solid #f2e9e1;
+}
+
+.hex-display {
+  font-family: monospace;
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: #8c7e72;
+}
+
+.btn-amber {
+  background: #d9884e;
+  color: #ffffff;
+  border: none;
+  padding: 8px 18px;
+  border-radius: 12px;
+  font-size: 0.88rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.btn-amber:hover {
+  background: #c5763d;
+}
+
+.btn-outline {
+  background: #ffffff;
+  border: 1px solid #d9884e;
+  color: #d9884e;
+  padding: 8px 16px;
+  border-radius: 12px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.btn-outline:hover {
+  background: #fdf8f4;
+}
+
+.sensor-content-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.detected-color-info {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.detected-text {
+  display: flex;
+  flex-direction: column;
+}
+
+/* Sound Level Meter */
+.sound-level-meter-wrapper {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.sound-level-labels {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: #6e6358;
+}
+
+.level-bar-background {
+  width: 100%;
+  height: 8px;
+  background: #e8f3ea;
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.level-bar-fill {
+  height: 100%;
+  background: #569670;
+  transition: width 0.3s ease;
+}
+
+.dots-meter-row {
+  display: flex;
+  gap: 4px;
+  justify-content: space-between;
+}
+
+.meter-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  background: #e3ebd9;
+}
+
+.meter-dot.active {
+  background: #569670;
+}
+
+@media (max-width: 768px) {
+  .modes-grid, .colors-grid {
+    grid-template-columns: 1fr;
+  }
+}

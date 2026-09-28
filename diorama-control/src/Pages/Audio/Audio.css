@@ -1,0 +1,149 @@
+.audio-breadcrumb {
+  color: #9269db;
+}
+
+.icon-badge.purple {
+  background-color: #f2ebfc;
+  color: #9269db;
+}
+
+.icon-badge.purple.small {
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+}
+
+.audio-actions-row {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  max-width: 240px;
+}
+
+.btn-audio-upload {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 20px;
+  border-radius: 16px;
+  border: 1px solid #d4c4f5;
+  background: #ffffff;
+  color: #3b887a;
+  font-size: 0.95rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.btn-audio-upload:hover {
+  background: #f7f4fd;
+}
+
+.hidden-file-input {
+  display: none;
+}
+
+.btn-audio-record {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 20px;
+  border-radius: 16px;
+  border: 1px solid #e7ded4;
+  background: #fdfbf7;
+  color: #5c4e3e;
+  font-size: 0.95rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.btn-audio-record:hover {
+  background: #f5efe6;
+}
+
+.btn-audio-record.recording {
+  background: #fee2e2;
+  border-color: #ef4444;
+  color: #dc2626;
+  animation: pulse-recording 1.5s infinite;
+}
+
+@keyframes pulse-recording {
+  0% { opacity: 1; }
+  50% { opacity: 0.7; }
+  100% { opacity: 1; }
+}
+
+.empty-audio-card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 24px;
+}
+
+.empty-subtext {
+  font-size: 0.9rem;
+  color: #887d96;
+}
+
+.recordings-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.recording-item {
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 20px;
+}
+
+.rec-info-group {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.rec-name {
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: #2e2638;
+}
+
+.rec-date {
+  font-size: 0.75rem;
+  color: #9287a3;
+}
+
+.rec-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.audio-play-circle-btn.purple-play {
+  background-color: #f2ebfc;
+  color: #9269db;
+}
+
+.audio-play-circle-btn.purple-play:hover {
+  background-color: #9269db;
+  color: #ffffff;
+}
+
+.btn-delete {
+  background: transparent;
+  border: none;
+  color: #a89bbd;
+  cursor: pointer;
+  padding: 6px;
+  border-radius: 8px;
+  transition: all 0.2s ease;
+}
+
+.btn-delete:hover {
+  color: #ef4444;
+  background: #fee2e2;
+}

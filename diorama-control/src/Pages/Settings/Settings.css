@@ -1,0 +1,210 @@
+.settings-breadcrumb {
+  color: #7b9484;
+}
+
+.settings-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 16px;
+}
+
+.icon-badge.sage {
+  background-color: #e8f0e8;
+  color: #569670;
+}
+
+.connection-status-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.status-gold-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background-color: #d9a04e;
+}
+
+.status-gold-dot.connected {
+  background-color: #569670;
+}
+
+.status-gold-text {
+  font-size: 0.88rem;
+  font-weight: 600;
+  color: #8c764e;
+}
+
+.card-description-subtext {
+  font-size: 0.85rem;
+  color: #7a8a7e;
+  line-height: 1.4;
+}
+
+.btn-card-action {
+  align-self: flex-start;
+  background: #ffffff;
+  border: 1px solid #d8e2d8;
+  padding: 8px 18px;
+  border-radius: 12px;
+  font-size: 0.88rem;
+  font-weight: 600;
+  color: #3b4d40;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  margin-top: 6px;
+}
+
+.btn-card-action:hover {
+  background: #f4f8f4;
+  border-color: #569670;
+}
+
+/* Sensors Card */
+.sensor-items-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.sensor-item-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 0.85rem;
+}
+
+.sensor-name {
+  color: #5a6b5e;
+  font-weight: 500;
+}
+
+.sensor-val {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 600;
+}
+
+.sensor-val.gold {
+  color: #a88344;
+}
+
+.sensor-val.muted {
+  color: #a39587;
+}
+
+.dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+}
+
+.gold-dot {
+  background: #d9a04e;
+}
+
+.muted-dot {
+  background: #b5a99c;
+}
+
+/* Control Source Card */
+.source-buttons-row {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.source-pill-btn {
+  background: #ffffff;
+  border: 1px solid #e0e8e0;
+  padding: 8px 16px;
+  border-radius: 14px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: #4a5c4e;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.source-pill-btn:hover {
+  background: #f4f8f4;
+}
+
+.source-pill-btn.active {
+  background: #f7f3e9;
+  border: 1px solid #d9c49e;
+  color: #4a3c28;
+}
+
+/* Account Card */
+.account-user-name {
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: #3b4d40;
+}
+
+.btn-logout {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  align-self: flex-start;
+  background: #ffffff;
+  border: 1px solid #d8e2d8;
+  padding: 8px 18px;
+  border-radius: 12px;
+  font-size: 0.88rem;
+  font-weight: 600;
+  color: #3b4d40;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.btn-logout:hover {
+  background: #fee2e2;
+  border-color: #ef4444;
+  color: #dc2626;
+}
+
+/* System Reset Card */
+.full-width-card {
+  width: 100%;
+}
+
+.system-actions-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 12px;
+}
+
+.btn-system-reset {
+  background: #ffffff;
+  border: 1px solid #e0e8e0;
+  padding: 12px 18px;
+  border-radius: 14px;
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: #3b4d40;
+  text-align: left;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.btn-system-reset:hover {
+  background: #f4f8f4;
+  border-color: #569670;
+}
+
+.btn-system-reset.highlight:hover {
+  background: #fef2f2;
+  border-color: #ef4444;
+  color: #dc2626;
+}
+
+@media (max-width: 768px) {
+  .settings-grid, .system-actions-grid {
+    grid-template-columns: 1fr;
+  }
+}

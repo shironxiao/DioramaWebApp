@@ -1,0 +1,96 @@
+.fountain-breadcrumb {
+  color: #3b9db3;
+}
+
+.icon-badge.teal {
+  background-color: #e4f5f8;
+  color: #3b9db3;
+}
+
+.slider.teal-toggle {
+  background-color: #d1d6cd;
+}
+
+input:checked + .slider.teal-toggle {
+  background-color: #3b9db3;
+}
+
+.custom-range-slider.teal-range::-webkit-slider-thumb {
+  background: #3b9db3;
+}
+
+.strength-value-label {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  font-size: 0.85rem;
+  color: #5c6b73;
+}
+
+/* Fountain Patterns Grid */
+.patterns-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 12px;
+}
+
+.pattern-card {
+  background: #ffffff;
+  border-radius: 16px;
+  padding: 20px 12px;
+  border: 1px solid #e0eaee;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.pattern-card:hover {
+  border-color: #3b9db3;
+  background: #f7fcfe;
+}
+
+.pattern-card.selected {
+  border: 2px solid #3b9db3;
+  background: #eaf6f9;
+}
+
+.pattern-icon {
+  color: #3b9db3;
+  opacity: 0.7;
+}
+
+.pattern-card.selected .pattern-icon {
+  opacity: 1;
+}
+
+.pattern-label {
+  font-size: 0.88rem;
+  font-weight: 700;
+  color: #2b3a42;
+}
+
+.btn-teal {
+  background: #3b9db3;
+  color: #ffffff;
+  border: none;
+  padding: 10px 22px;
+  border-radius: 12px;
+  font-size: 0.88rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.btn-teal:hover {
+  background: #2d8598;
+}
+
+@media (max-width: 768px) {
+  .patterns-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
