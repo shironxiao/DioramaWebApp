@@ -19,8 +19,7 @@ export default function DioramaCanvas({
   const lightsGroupRef = useRef(null);
   const fountainParticlesRef = useRef([]);
   const plazaMeshRef = useRef(null);
-  const fountainMeshRef = useRef(null);
-  const customStlMeshRef = useRef(null);
+  const fountainMeshesRef = useRef([]);
   const gateRef = useRef(null);
 
   useEffect(() => {
@@ -32,21 +31,21 @@ export default function DioramaCanvas({
 
     // Scene setup
     const scene = new THREE.Scene();
-    scene.background = new THREE.Color(autoDimming ? 0xecf3ec : 0xf7faf7);
+    scene.background = new THREE.Color(autoDimming ? 0xe9f0e9 : 0xf6f9f6);
     sceneRef.current = scene;
 
-    // Camera
-    const camera = new THREE.PerspectiveCamera(38, width / height, 0.1, 1000);
-    camera.position.set(16, 15, 20);
+    // Camera tailored for wide diorama layout
+    const camera = new THREE.PerspectiveCamera(36, width / height, 0.1, 1000);
+    camera.position.set(0, 17, 23);
 
-    // Renderer
+    // Renderer setup
     const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
     renderer.setSize(width, height);
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     renderer.shadowMap.enabled = true;
     renderer.shadowMap.type = THREE.PCFShadowMap;
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    renderer.toneMappingExposure = 1.1;
+    renderer.toneMappingExposure = 1.15;
 
     container.innerHTML = '';
     container.appendChild(renderer.domElement);
@@ -55,158 +54,173 @@ export default function DioramaCanvas({
     const controls = new OrbitControls(camera, renderer.domElement);
     controls.enableDamping = true;
     controls.dampingFactor = 0.05;
-    controls.maxPolarAngle = Math.PI / 2 - 0.05;
+    controls.maxPolarAngle = Math.PI / 2 - 0.02;
     controls.minDistance = 10;
-    controls.maxDistance = 40;
-    controls.target.set(0, 2, 0);
+    controls.maxDistance = 50;
+    controls.target.set(0, 1.2, 0);
 
-    // Main Lighting Group
+    // Lighting Group
     const lightingGroup = new THREE.Group();
     scene.add(lightingGroup);
 
-    const ambientLight = new THREE.AmbientLight(0xfffaee, 0.9);
+    const ambientLight = new THREE.AmbientLight(0xfffaee, 0.85);
     lightingGroup.add(ambientLight);
 
-    const sunLight = new THREE.DirectionalLight(0xfff7e6, 1.4);
-    sunLight.position.set(12, 22, 10);
+    const sunLight = new THREE.DirectionalLight(0xfff8ea, 1.3);
+    sunLight.position.set(15, 24, 12);
     sunLight.castShadow = true;
-    sunLight.shadow.mapSize.width = 1024;
-    sunLight.shadow.mapSize.height = 1024;
+    sunLight.shadow.mapSize.width = 2048;
+    sunLight.shadow.mapSize.height = 2048;
     sunLight.shadow.camera.near = 0.5;
-    sunLight.shadow.camera.far = 50;
+    sunLight.shadow.camera.far = 60;
+    sunLight.shadow.camera.left = -16;
+    sunLight.shadow.camera.right = 16;
+    sunLight.shadow.camera.top = 12;
+    sunLight.shadow.camera.bottom = -12;
     lightingGroup.add(sunLight);
 
-    // Point lights group
+    // Dynamic Point Lights Group (Pathway Lamps & Spotlights)
     const pointLightsGroup = new THREE.Group();
     scene.add(pointLightsGroup);
     lightsGroupRef.current = pointLightsGroup;
 
-    // --- DIORAMA GROUP ---
+    // --- MAIN DIORAMA ASSEMBLY ---
     const dioramaGroup = new THREE.Group();
     scene.add(dioramaGroup);
 
-    // 1. Black Base
-    const baseGeo = new THREE.BoxGeometry(14.2, 1.2, 14.2);
-    const baseMat = new THREE.MeshStandardMaterial({ color: 0x1a1c1e, roughness: 0.3, metalness: 0.8 });
+    // Dimensions matching exact reference image
+    const BOX_W = 21.0;
+    const BOX_D = 11.2;
+    const BASE_H = 1.5;
+
+    // 1. Sleek Black Enclosure Base Frame
+    const baseGeo = new THREE.BoxGeometry(BOX_W, BASE_H, BOX_D);
+    const baseMat = new THREE.MeshStandardMaterial({
+      color: 0x18191b,
+      roughness: 0.35,
+      metalness: 0.75
+    });
     const baseMesh = new THREE.Mesh(baseGeo, baseMat);
-    baseMesh.position.y = -0.6;
+    baseMesh.position.y = -BASE_H / 2;
     baseMesh.receiveShadow = true;
     dioramaGroup.add(baseMesh);
 
-    // Base Corners
-    const cornerGeo = new THREE.BoxGeometry(0.4, 1.3, 0.4);
-    const cornerMat = new THREE.MeshStandardMaterial({ color: 0x333639, metalness: 0.9, roughness: 0.2 });
-    [[-7.1, -7.1], [7.1, -7.1], [-7.1, 7.1], [7.1, 7.1]].forEach(([cx, cz]) => {
-      const corner = new THREE.Mesh(cornerGeo, cornerMat);
-      corner.position.set(cx, -0.6, cz);
-      dioramaGroup.add(corner);
-    });
+    // Front Details: Water Input Panel, Knobs, & Power Cable Connector
+    const panelMat = new THREE.MeshStandardMaterial({ color: 0x27292c, roughness: 0.4, metalness: 0.8 });
+    const knobMat = new THREE.MeshStandardMaterial({ color: 0xcccccc, metalness: 0.9, roughness: 0.2 });
 
-    // 2. Sage Green Ground
-    const grassGeo = new THREE.BoxGeometry(13.6, 0.6, 13.6);
-    const grassMat = new THREE.MeshStandardMaterial({ color: 0xa9bc9d, roughness: 0.85 });
+    // Water Input Box (Left Front)
+    const waterInputBox = new THREE.Mesh(new THREE.BoxGeometry(2.4, 0.7, 0.05), panelMat);
+    waterInputBox.position.set(-7.5, -BASE_H / 2, BOX_D / 2 + 0.03);
+    dioramaGroup.add(waterInputBox);
+
+    const waterKnob = new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.14, 0.15, 16), knobMat);
+    waterKnob.rotation.x = Math.PI / 2;
+    waterKnob.position.set(-6.8, -BASE_H / 2, BOX_D / 2 + 0.08);
+    dioramaGroup.add(waterKnob);
+
+    // Center Drawer Panel
+    const drawerPanel = new THREE.Mesh(new THREE.BoxGeometry(4.8, 0.75, 0.05), panelMat);
+    drawerPanel.position.set(2.0, -BASE_H / 2, BOX_D / 2 + 0.03);
+    dioramaGroup.add(drawerPanel);
+
+    const drawerKnob = new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.14, 0.15, 16), knobMat);
+    drawerKnob.rotation.x = Math.PI / 2;
+    drawerKnob.position.set(4.0, -BASE_H / 2, BOX_D / 2 + 0.08);
+    dioramaGroup.add(drawerKnob);
+
+
+
+    // 2. Sage Green Lawn Platform
+    const grassGeo = new THREE.BoxGeometry(BOX_W - 0.4, 0.5, BOX_D - 0.4);
+    const grassMat = new THREE.MeshStandardMaterial({
+      color: 0x9cb096, // Sage green matching reference photo
+      roughness: 0.85
+    });
     const grassMesh = new THREE.Mesh(grassGeo, grassMat);
-    grassMesh.position.y = 0.3;
+    grassMesh.position.y = 0.25;
     grassMesh.receiveShadow = true;
     dioramaGroup.add(grassMesh);
 
-    // 3. Sandy Cross Paths
-    const pathMat = new THREE.MeshStandardMaterial({ color: 0xded7c8, roughness: 0.9 });
-    const path1 = new THREE.Mesh(new THREE.BoxGeometry(13.5, 0.02, 2.2), pathMat);
-    path1.position.y = 0.61;
-    path1.receiveShadow = true;
-    dioramaGroup.add(path1);
+    // 3. Curved Pathway Network (Oval loop + Cross connectors)
+    const pathMat = new THREE.MeshStandardMaterial({
+      color: 0xd8cebe, // Warm sandy paver tone
+      roughness: 0.85
+    });
 
-    const path2 = new THREE.Mesh(new THREE.BoxGeometry(2.2, 0.02, 13.5), pathMat);
-    path2.position.y = 0.61;
-    path2.receiveShadow = true;
-    dioramaGroup.add(path2);
+    // Central Horizontal Path
+    const pathMainH = new THREE.Mesh(new THREE.BoxGeometry(BOX_W - 1.2, 0.02, 1.8), pathMat);
+    pathMainH.position.y = 0.51;
+    pathMainH.receiveShadow = true;
+    dioramaGroup.add(pathMainH);
 
-    // Central Circle Plaza
-    const plazaGeo = new THREE.CylinderGeometry(2.4, 2.4, 0.03, 32);
-    const plazaMat = new THREE.MeshStandardMaterial({ color: new THREE.Color(circleColor), roughness: 0.7 });
+    // Central Vertical Path
+    const pathMainV = new THREE.Mesh(new THREE.BoxGeometry(1.8, 0.02, BOX_D - 1.2), pathMat);
+    pathMainV.position.y = 0.51;
+    pathMainV.receiveShadow = true;
+    dioramaGroup.add(pathMainV);
+
+    // Outer Curved Loop Path Ribbons
+    const loopRadiusX = 7.8;
+    const loopRadiusZ = 3.6;
+    const pathLoopGeo = new THREE.RingGeometry(loopRadiusZ - 0.6, loopRadiusZ + 0.6, 64);
+    const leftLoop = new THREE.Mesh(pathLoopGeo, pathMat);
+    leftLoop.rotation.x = -Math.PI / 2;
+    leftLoop.position.set(-4.5, 0.51, 0);
+    leftLoop.scale.set(1.4, 1.0, 1.0);
+    leftLoop.receiveShadow = true;
+    dioramaGroup.add(leftLoop);
+
+    const rightLoop = new THREE.Mesh(pathLoopGeo, pathMat);
+    rightLoop.rotation.x = -Math.PI / 2;
+    rightLoop.position.set(4.5, 0.51, 0);
+    rightLoop.scale.set(1.4, 1.0, 1.0);
+    rightLoop.receiveShadow = true;
+    dioramaGroup.add(rightLoop);
+
+    // 4. Central Circular Colonnade Plaza (Matching the pillar ring in reference photo)
+    const plazaRadius = 2.5;
+    const plazaGeo = new THREE.CylinderGeometry(plazaRadius, plazaRadius, 0.04, 48);
+    const plazaMat = new THREE.MeshStandardMaterial({
+      color: new THREE.Color(circleColor),
+      roughness: 0.65
+    });
     const plaza = new THREE.Mesh(plazaGeo, plazaMat);
-    plaza.position.y = 0.62;
+    plaza.position.y = 0.52;
     plaza.receiveShadow = true;
     dioramaGroup.add(plaza);
     plazaMeshRef.current = plaza;
 
-    // 4. Wooden Arch Gates
-    const archMat = new THREE.MeshStandardMaterial({ color: 0x8c533c, roughness: 0.6 });
-    const archRoofMat = new THREE.MeshStandardMaterial({ color: 0x543224, roughness: 0.5 });
+    // Colonnade Pillar Ring
+    const pillarMat = new THREE.MeshStandardMaterial({ color: 0xc4b7a5, roughness: 0.5 });
+    const pillarTopRingMat = new THREE.MeshStandardMaterial({ color: 0xb5a794, roughness: 0.5 });
+    const numPillars = 20;
 
-    const createArch = (x, z, rotY, isInteractive = false) => {
-      const archGroup = new THREE.Group();
-      archGroup.position.set(x, 0.6, z);
-      archGroup.rotation.y = rotY;
+    for (let i = 0; i < numPillars; i++) {
+      const angle = (i / numPillars) * Math.PI * 2;
+      const px = Math.cos(angle) * (plazaRadius - 0.2);
+      const pz = Math.sin(angle) * (plazaRadius - 0.2);
 
-      const p1 = new THREE.Mesh(new THREE.BoxGeometry(0.5, 3.2, 0.6), archMat);
-      p1.position.set(-1.1, 1.6, 0);
-      p1.castShadow = true;
-      archGroup.add(p1);
+      const pillar = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.1, 0.8, 12), pillarMat);
+      pillar.position.set(px, 0.92, pz);
+      pillar.castShadow = true;
+      dioramaGroup.add(pillar);
+    }
 
-      const p2 = new THREE.Mesh(new THREE.BoxGeometry(0.5, 3.2, 0.6), archMat);
-      p2.position.set(1.1, 1.6, 0);
-      p2.castShadow = true;
-      archGroup.add(p2);
+    // Colonnade Architrave Ring
+    const ringBeamGeo = new THREE.TorusGeometry(plazaRadius - 0.2, 0.1, 12, 48);
+    const ringBeam = new THREE.Mesh(ringBeamGeo, pillarTopRingMat);
+    ringBeam.rotation.x = Math.PI / 2;
+    ringBeam.position.y = 1.34;
+    ringBeam.castShadow = true;
+    dioramaGroup.add(ringBeam);
 
-      const topBeam = new THREE.Mesh(new THREE.BoxGeometry(2.8, 0.6, 0.7), archRoofMat);
-      topBeam.position.set(0, 3.2, 0);
-      topBeam.castShadow = true;
-      archGroup.add(topBeam);
+    // 5. Dual Fountain Basins (Left & Right) + Custom STL Model
+    const fountainPositions = [
+      { x: -5.8, z: 0 },
+      { x: 5.8, z: 0 }
+    ];
 
-      const archCurveGeo = new THREE.TorusGeometry(0.9, 0.22, 12, 24, Math.PI);
-      const archCurve = new THREE.Mesh(archCurveGeo, archRoofMat);
-      archCurve.position.set(0, 2.7, 0);
-      archCurve.castShadow = true;
-      archGroup.add(archCurve);
-
-      if (isInteractive) gateRef.current = archGroup;
-      return archGroup;
-    };
-
-    dioramaGroup.add(createArch(-6, 0, Math.PI / 2));
-    dioramaGroup.add(createArch(6, 0, -Math.PI / 2, true));
-
-    // 5. Pine Trees
-    const treeTrunkMat = new THREE.MeshStandardMaterial({ color: 0x4a3425, roughness: 0.9 });
-    const treeFoliageMat = new THREE.MeshStandardMaterial({ color: 0x2b543e, roughness: 0.8, flatShading: true });
-
-    const createPineTree = (x, z, scale = 1) => {
-      const tree = new THREE.Group();
-      tree.position.set(x, 0.6, z);
-      tree.scale.set(scale, scale, scale);
-
-      const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.28, 1.2, 8), treeTrunkMat);
-      trunk.position.y = 0.6;
-      trunk.castShadow = true;
-      tree.add(trunk);
-
-      const cone1 = new THREE.Mesh(new THREE.ConeGeometry(1.4, 1.6, 7), treeFoliageMat);
-      cone1.position.y = 1.6;
-      cone1.castShadow = true;
-      tree.add(cone1);
-
-      const cone2 = new THREE.Mesh(new THREE.ConeGeometry(1.1, 1.4, 7), treeFoliageMat);
-      cone2.position.y = 2.4;
-      cone2.castShadow = true;
-      tree.add(cone2);
-
-      const cone3 = new THREE.Mesh(new THREE.ConeGeometry(0.75, 1.1, 7), treeFoliageMat);
-      cone3.position.y = 3.1;
-      cone3.castShadow = true;
-      tree.add(cone3);
-
-      return tree;
-    };
-
-    [
-      [-5, -4.5, 1.1], [-4, -2.5, 0.95], [-5.2, 3.5, 1.2], [-3.8, 5, 0.9],
-      [4.8, -4, 1.15], [3.5, -5.2, 0.9], [5, 4.5, 1.2], [3.8, 2.5, 0.85],
-      [-1.8, -5.2, 1.0], [1.8, -5.2, 0.95], [-2, 5.2, 1.1], [2, 5.2, 1.0]
-    ].forEach(([tx, tz, ts]) => dioramaGroup.add(createPineTree(tx, tz, ts)));
-
-    // 6. Fountains
     const fountainBaseMat = new THREE.MeshStandardMaterial({ color: 0x7da4b3, roughness: 0.4 });
     const waterMat = new THREE.MeshStandardMaterial({
       color: new THREE.Color(fountainColor),
@@ -215,36 +229,25 @@ export default function DioramaCanvas({
       opacity: 0.85
     });
 
-    const createFountain = (x, z) => {
-      const fountainGroup = new THREE.Group();
-      fountainGroup.position.set(x, 0.6, z);
+    fountainPositions.forEach((pos) => {
+      const fGroup = new THREE.Group();
+      fGroup.position.set(pos.x, 0.5, pos.z);
 
-      const basin = new THREE.Mesh(new THREE.CylinderGeometry(1.2, 1.0, 0.5, 16), fountainBaseMat);
-      basin.position.y = 0.25;
+      // Outer Ring Basin Pool
+      const basin = new THREE.Mesh(new THREE.CylinderGeometry(1.5, 1.3, 0.4, 24), fountainBaseMat);
+      basin.position.y = 0.2;
       basin.castShadow = true;
-      fountainGroup.add(basin);
+      fGroup.add(basin);
 
-      const pool = new THREE.Mesh(new THREE.CylinderGeometry(1.05, 1.05, 0.05, 16), waterMat);
-      pool.position.y = 0.48;
-      fountainMeshRef.current = pool;
-      fountainGroup.add(pool);
+      const pool = new THREE.Mesh(new THREE.CylinderGeometry(1.35, 1.35, 0.05, 24), waterMat);
+      pool.position.y = 0.38;
+      fGroup.add(pool);
+      fountainMeshesRef.current.push(pool);
 
-      const pillar = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.25, 1.4, 12), fountainBaseMat);
-      pillar.position.y = 0.95;
-      pillar.castShadow = true;
-      fountainGroup.add(pillar);
+      dioramaGroup.add(fGroup);
+    });
 
-      const topBowl = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.3, 0.3, 12), fountainBaseMat);
-      topBowl.position.y = 1.6;
-      fountainGroup.add(topBowl);
-
-      return fountainGroup;
-    };
-
-    dioramaGroup.add(createFountain(0, -3.8));
-    dioramaGroup.add(createFountain(0, 3.8));
-
-    // --- LOAD CLASSMATE'S CUSTOM 3D STL MODEL ---
+    // Load Classmate's fountainFinal.stl onto both fountain pools
     const stlLoader = new STLLoader();
     stlLoader.load(
       '/fountainFinal.stl',
@@ -255,32 +258,32 @@ export default function DioramaCanvas({
         geometry.computeBoundingBox();
         const bbox = geometry.boundingBox;
         const sizeY = bbox.max.y - bbox.min.y;
-        const desiredHeight = 2.4;
+        const desiredHeight = 1.6;
         const scaleFactor = desiredHeight / (sizeY || 1);
 
-        const stlMat = new THREE.MeshStandardMaterial({
-          color: new THREE.Color(fountainColor),
-          roughness: 0.3,
-          metalness: 0.2
+        fountainPositions.forEach((pos) => {
+          const stlMat = new THREE.MeshStandardMaterial({
+            color: new THREE.Color(fountainColor),
+            roughness: 0.3,
+            metalness: 0.2
+          });
+
+          const stlMesh = new THREE.Mesh(geometry, stlMat);
+          stlMesh.rotation.x = -Math.PI / 2;
+          stlMesh.scale.set(scaleFactor, scaleFactor, scaleFactor);
+          stlMesh.position.set(pos.x, 1.3, pos.z);
+          stlMesh.castShadow = true;
+          stlMesh.receiveShadow = true;
+
+          fountainMeshesRef.current.push(stlMesh);
+          dioramaGroup.add(stlMesh);
         });
-
-        const stlMesh = new THREE.Mesh(geometry, stlMat);
-        stlMesh.rotation.x = -Math.PI / 2;
-        stlMesh.scale.set(scaleFactor, scaleFactor, scaleFactor);
-        stlMesh.position.set(0, 1.8, 0);
-        stlMesh.castShadow = true;
-        stlMesh.receiveShadow = true;
-
-        customStlMeshRef.current = stlMesh;
-        dioramaGroup.add(stlMesh);
       },
       undefined,
-      (err) => {
-        console.log('STL load notice:', err);
-      }
+      (err) => console.log('STL Load notice:', err)
     );
 
-    // Particles
+    // Animated Fountain Water Particle Spray
     const particles = [];
     const particleGeo = new THREE.SphereGeometry(0.06, 6, 6);
     const particleMat = new THREE.MeshBasicMaterial({
@@ -289,20 +292,20 @@ export default function DioramaCanvas({
       opacity: 0.85
     });
 
-    [{ x: 0, z: -3.8 }, { x: 0, z: 3.8 }, { x: 0, z: 0 }].forEach((fc) => {
-      for (let p = 0; p < 24; p++) {
+    fountainPositions.forEach((fp) => {
+      for (let p = 0; p < 28; p++) {
         const particle = new THREE.Mesh(particleGeo, particleMat);
         particle.position.set(
-          fc.x + (Math.random() - 0.5) * 0.3,
-          2.2 + Math.random() * 0.8,
-          fc.z + (Math.random() - 0.5) * 0.3
+          fp.x + (Math.random() - 0.5) * 0.3,
+          1.5 + Math.random() * 0.7,
+          fp.z + (Math.random() - 0.5) * 0.3
         );
         particle.userData = {
-          originX: fc.x,
-          originZ: fc.z,
-          vy: 0.03 + Math.random() * 0.04,
-          vx: (Math.random() - 0.5) * 0.02,
-          vz: (Math.random() - 0.5) * 0.02
+          originX: fp.x,
+          originZ: fp.z,
+          vy: 0.035 + Math.random() * 0.03,
+          vx: (Math.random() - 0.5) * 0.025,
+          vz: (Math.random() - 0.5) * 0.025
         };
         dioramaGroup.add(particle);
         particles.push(particle);
@@ -310,71 +313,239 @@ export default function DioramaCanvas({
     });
     fountainParticlesRef.current = particles;
 
-    // 7. Small Peg Figures
-    [0xf4d068, 0xef7a7a, 0x7ebcf0, 0xb88ce8, 0xfa9e5c, 0x78cb96].forEach((color, i) => {
-      const angle = (i / 6) * Math.PI * 2;
-      const fx = Math.cos(angle) * 1.8;
-      const fz = Math.sin(angle) * 1.8;
-      const figGroup = new THREE.Group();
-      figGroup.position.set(fx, 0.6, fz);
-      const figMat = new THREE.MeshStandardMaterial({ color, roughness: 0.4 });
-      const body = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.18, 0.55, 12), figMat);
-      body.position.y = 0.285;
-      figGroup.add(body);
-      const head = new THREE.Mesh(new THREE.SphereGeometry(0.14, 12, 12), figMat);
-      head.position.y = 0.65;
-      figGroup.add(head);
-      dioramaGroup.add(figGroup);
+    // 6. Park Sign Plate ("We ❤️ SANTA ELENA" on right path)
+    const signGroup = new THREE.Group();
+    signGroup.position.set(7.5, 0.52, -1.2);
+
+    const signBoard = new THREE.Mesh(new THREE.BoxGeometry(2.2, 0.45, 0.08), new THREE.MeshStandardMaterial({ color: 0x3d352b, roughness: 0.6 }));
+    signBoard.position.y = 0.5;
+    signBoard.castShadow = true;
+    signGroup.add(signBoard);
+
+    const signPost1 = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, 0.6, 8), new THREE.MeshStandardMaterial({ color: 0x1f1f1f }));
+    signPost1.position.set(-0.9, 0.3, 0);
+    signGroup.add(signPost1);
+
+    const signPost2 = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, 0.6, 8), new THREE.MeshStandardMaterial({ color: 0x1f1f1f }));
+    signPost2.position.set(0.9, 0.3, 0);
+    signGroup.add(signPost2);
+
+    // Heart Symbol Badge
+    const heartMesh = new THREE.Mesh(new THREE.SphereGeometry(0.09, 8, 8), new THREE.MeshStandardMaterial({ color: 0xe63946 }));
+    heartMesh.position.set(-0.25, 0.5, 0.06);
+    signGroup.add(heartMesh);
+
+    dioramaGroup.add(signGroup);
+
+    // 7. Stone Arch Gates (Front & Back - Matching reference photo)
+    const archMat = new THREE.MeshStandardMaterial({ color: 0x8c6d58, roughness: 0.65 });
+    const archRoofMat = new THREE.MeshStandardMaterial({ color: 0x543f32, roughness: 0.5 });
+    const ironGateMat = new THREE.MeshStandardMaterial({ color: 0x1f1f1f, metalness: 0.8 });
+
+    const createStoneGate = (x, z, rotY, isInteractive = false) => {
+      const gateGroup = new THREE.Group();
+      gateGroup.position.set(x, 0.5, z);
+      gateGroup.rotation.y = rotY;
+
+      // Pillars
+      const p1 = new THREE.Mesh(new THREE.BoxGeometry(0.65, 3.0, 0.65), archMat);
+      p1.position.set(-1.2, 1.5, 0);
+      p1.castShadow = true;
+      gateGroup.add(p1);
+
+      const p2 = new THREE.Mesh(new THREE.BoxGeometry(0.65, 3.0, 0.65), archMat);
+      p2.position.set(1.2, 1.5, 0);
+      p2.castShadow = true;
+      gateGroup.add(p2);
+
+      // Top Arch Beam
+      const topBeam = new THREE.Mesh(new THREE.BoxGeometry(3.0, 0.5, 0.75), archRoofMat);
+      topBeam.position.set(0, 3.0, 0);
+      topBeam.castShadow = true;
+      gateGroup.add(topBeam);
+
+      const archCurveGeo = new THREE.TorusGeometry(1.0, 0.22, 12, 24, Math.PI);
+      const archCurve = new THREE.Mesh(archCurveGeo, archRoofMat);
+      archCurve.position.set(0, 2.5, 0);
+      archCurve.castShadow = true;
+      gateGroup.add(archCurve);
+
+      // Inner Wrought-Iron Grill Doors
+      for (let g = -0.8; g <= 0.8; g += 0.25) {
+        const bar = new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.025, 2.2, 8), ironGateMat);
+        bar.position.set(g, 1.2, 0);
+        gateGroup.add(bar);
+      }
+
+      if (isInteractive) gateRef.current = gateGroup;
+      return gateGroup;
+    };
+
+    dioramaGroup.add(createStoneGate(0, 4.8, 0, true)); // Front Gate
+    dioramaGroup.add(createStoneGate(0, -4.8, Math.PI)); // Back Gate
+
+    // 8. Perimeter Dense Pine Trees & Shrubs (Matching reference photo dense foliage)
+    const trunkMat = new THREE.MeshStandardMaterial({ color: 0x3d2b1f, roughness: 0.9 });
+    const foliageMat1 = new THREE.MeshStandardMaterial({ color: 0x2b4c3b, roughness: 0.8, flatShading: true });
+    const foliageMat2 = new THREE.MeshStandardMaterial({ color: 0x365d49, roughness: 0.75, flatShading: true });
+
+    const createDenseTree = (x, z, scale = 1, isAlt = false) => {
+      const tree = new THREE.Group();
+      tree.position.set(x, 0.5, z);
+      tree.scale.set(scale, scale, scale);
+
+      const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.25, 1.0, 8), trunkMat);
+      trunk.position.y = 0.5;
+      trunk.castShadow = true;
+      tree.add(trunk);
+
+      const mat = isAlt ? foliageMat2 : foliageMat1;
+
+      const cone1 = new THREE.Mesh(new THREE.ConeGeometry(1.3, 1.5, 7), mat);
+      cone1.position.y = 1.4;
+      cone1.castShadow = true;
+      tree.add(cone1);
+
+      const cone2 = new THREE.Mesh(new THREE.ConeGeometry(1.0, 1.3, 7), mat);
+      cone2.position.y = 2.1;
+      cone2.castShadow = true;
+      tree.add(cone2);
+
+      const cone3 = new THREE.Mesh(new THREE.ConeGeometry(0.7, 1.0, 7), mat);
+      cone3.position.y = 2.7;
+      cone3.castShadow = true;
+      tree.add(cone3);
+
+      return tree;
+    };
+
+    // Dense tree row along back, left, right, and front corners
+    const treePositions = [
+      // Back Row
+      [-9.2, -4.2, 1.15], [-7.8, -4.5, 0.9], [-6.2, -4.2, 1.2], [-4.5, -4.5, 1.0], [-2.8, -4.2, 1.1],
+      [2.8, -4.2, 1.1], [4.5, -4.5, 1.0], [6.2, -4.2, 1.25], [7.8, -4.5, 0.95], [9.2, -4.2, 1.15],
+      // Left Edge
+      [-9.4, -2.5, 1.0], [-9.2, -0.8, 1.2], [-9.5, 0.8, 0.95], [-9.2, 2.5, 1.1], [-9.4, 4.0, 1.0],
+      // Right Edge
+      [9.4, -2.5, 1.0], [9.2, -0.8, 1.15], [9.5, 0.8, 1.0], [9.2, 2.5, 1.2], [9.4, 4.0, 0.9],
+      // Front Corners
+      [-7.5, 4.2, 1.1], [-5.8, 4.4, 0.95], [5.8, 4.4, 1.0], [7.5, 4.2, 1.15]
+    ];
+    treePositions.forEach(([tx, tz, ts], idx) => dioramaGroup.add(createDenseTree(tx, tz, ts, idx % 2 === 0)));
+
+    // Agave / Succulent Plants along path borders
+    const plantMat = new THREE.MeshStandardMaterial({ color: 0x476b56, roughness: 0.6 });
+    const plantPositions = [
+      [-3.2, 3.2], [-2.2, 3.6], [2.2, 3.6], [3.2, 3.2],
+      [-3.2, -3.2], [-2.2, -3.6], [2.2, -3.6], [3.2, -3.2]
+    ];
+
+    plantPositions.forEach(([px, pz]) => {
+      const plant = new THREE.Group();
+      plant.position.set(px, 0.51, pz);
+      for (let l = 0; l < 8; l++) {
+        const leaf = new THREE.Mesh(new THREE.ConeGeometry(0.12, 0.7, 5), plantMat);
+        leaf.rotation.x = Math.PI / 4;
+        leaf.rotation.y = (l / 8) * Math.PI * 2;
+        leaf.position.y = 0.2;
+        plant.add(leaf);
+      }
+      dioramaGroup.add(plant);
     });
 
-    // 8. Lamp Posts
-    const lampMat = new THREE.MeshStandardMaterial({ color: 0x3d3b38 });
-    const bulbMat = new THREE.MeshBasicMaterial({ color: 0xfffae0 });
-    [
-      [-2.8, -1.6], [2.8, -1.6], [-2.8, 1.6], [2.8, 1.6],
-      [-1.6, -2.8], [1.6, -2.8], [-1.6, 2.8], [1.6, 2.8]
-    ].forEach(([lx, lz]) => {
+    // 9. Warm Pathway Bollard Lamps (Matching golden night glow along path in photo)
+    const lampMat = new THREE.MeshStandardMaterial({ color: 0x222222 });
+    const glowBulbMat = new THREE.MeshBasicMaterial({ color: 0xffea9f });
+
+    const pathwayLampPositions = [
+      // Along Left Loop
+      [-7.8, -1.8], [-6.2, -2.8], [-4.2, -2.8], [-2.8, -1.8],
+      [-7.8, 1.8], [-6.2, 2.8], [-4.2, 2.8], [-2.8, 1.8],
+      // Along Right Loop
+      [2.8, -1.8], [4.2, -2.8], [6.2, -2.8], [7.8, -1.8],
+      [2.8, 1.8], [4.2, 2.8], [6.2, 2.8], [7.8, 1.8],
+      // Along Central Plaza
+      [-1.8, -0.9], [1.8, -0.9], [-1.8, 0.9], [1.8, 0.9],
+      // Along Gates
+      [-1.2, 4.0], [1.2, 4.0], [-1.2, -4.0], [1.2, -4.0]
+    ];
+
+    pathwayLampPositions.forEach(([lx, lz]) => {
       const lamp = new THREE.Group();
-      lamp.position.set(lx, 0.6, lz);
-      const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.06, 0.7, 8), lampMat);
-      pole.position.y = 0.35;
+      lamp.position.set(lx, 0.5, lz);
+
+      const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.05, 0.55, 8), lampMat);
+      pole.position.y = 0.275;
+      pole.castShadow = true;
       lamp.add(pole);
-      const bulb = new THREE.Mesh(new THREE.SphereGeometry(0.12, 10, 10), bulbMat);
-      bulb.position.y = 0.75;
+
+      const cap = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.1, 0.05, 8), lampMat);
+      cap.position.y = 0.58;
+      lamp.add(cap);
+
+      const bulb = new THREE.Mesh(new THREE.SphereGeometry(0.08, 8, 8), glowBulbMat);
+      bulb.position.y = 0.52;
       lamp.add(bulb);
 
-      const pLight = new THREE.PointLight(0xffebaa, (brightness / 100) * 1.5, 4.5);
-      pLight.position.set(lx, 1.4, lz);
+      const pLight = new THREE.PointLight(0xffea9f, (brightness / 100) * 1.2, 3.8);
+      pLight.position.set(lx, 1.1, lz);
       pointLightsGroup.add(pLight);
+
       dioramaGroup.add(lamp);
     });
 
-    // 9. Glass Container
+    // 10. Glass Container (Matching exact glass casing with dark top rim in photo)
     const glassWallMat = new THREE.MeshPhysicalMaterial({
       color: 0xffffff,
-      transmission: 0.92,
+      transmission: 0.94,
       opacity: 1,
       transparent: true,
-      roughness: 0.05,
-      ior: 1.4,
-      thickness: 0.3
+      roughness: 0.04,
+      ior: 1.45,
+      thickness: 0.25,
+      specularIntensity: 0.9
     });
-    const glassWidth = 13.8;
-    const glassHeight = 8;
-    const glassFront = new THREE.Mesh(new THREE.BoxGeometry(glassWidth, glassHeight, 0.08), glassWallMat);
-    glassFront.position.set(0, glassHeight / 2 + 0.6, glassWidth / 2);
+
+    const glassHeight = 6.2;
+    const glassW = BOX_W - 0.2;
+    const glassD = BOX_D - 0.2;
+
+    // Glass Walls
+    const glassFront = new THREE.Mesh(new THREE.BoxGeometry(glassW, glassHeight, 0.06), glassWallMat);
+    glassFront.position.set(0, glassHeight / 2 + 0.5, glassD / 2);
     dioramaGroup.add(glassFront);
-    const glassBack = new THREE.Mesh(new THREE.BoxGeometry(glassWidth, glassHeight, 0.08), glassWallMat);
-    glassBack.position.set(0, glassHeight / 2 + 0.6, -glassWidth / 2);
+
+    const glassBack = new THREE.Mesh(new THREE.BoxGeometry(glassW, glassHeight, 0.06), glassWallMat);
+    glassBack.position.set(0, glassHeight / 2 + 0.5, -glassD / 2);
     dioramaGroup.add(glassBack);
-    const glassLeft = new THREE.Mesh(new THREE.BoxGeometry(0.08, glassHeight, glassWidth), glassWallMat);
-    glassLeft.position.set(-glassWidth / 2, glassHeight / 2 + 0.6, 0);
+
+    const glassLeft = new THREE.Mesh(new THREE.BoxGeometry(0.06, glassHeight, glassD), glassWallMat);
+    glassLeft.position.set(-glassW / 2, glassHeight / 2 + 0.5, 0);
     dioramaGroup.add(glassLeft);
-    const glassRight = new THREE.Mesh(new THREE.BoxGeometry(0.08, glassHeight, glassWidth), glassWallMat);
-    glassRight.position.set(glassWidth / 2, glassHeight / 2 + 0.6, 0);
+
+    const glassRight = new THREE.Mesh(new THREE.BoxGeometry(0.06, glassHeight, glassD), glassWallMat);
+    glassRight.position.set(glassW / 2, glassHeight / 2 + 0.5, 0);
     dioramaGroup.add(glassRight);
 
-    // Raycaster interaction
+    // Dark Metallic Top Border Frame
+    const topFrameMat = new THREE.MeshStandardMaterial({ color: 0x1f2022, roughness: 0.4, metalness: 0.8 });
+    const topFrameFront = new THREE.Mesh(new THREE.BoxGeometry(glassW + 0.1, 0.15, 0.15), topFrameMat);
+    topFrameFront.position.set(0, glassHeight + 0.5, glassD / 2);
+    dioramaGroup.add(topFrameFront);
+
+    const topFrameBack = new THREE.Mesh(new THREE.BoxGeometry(glassW + 0.1, 0.15, 0.15), topFrameMat);
+    topFrameBack.position.set(0, glassHeight + 0.5, -glassD / 2);
+    dioramaGroup.add(topFrameBack);
+
+    const topFrameLeft = new THREE.Mesh(new THREE.BoxGeometry(0.15, 0.15, glassD + 0.1), topFrameMat);
+    topFrameLeft.position.set(-glassW / 2, glassHeight + 0.5, 0);
+    dioramaGroup.add(topFrameLeft);
+
+    const topFrameRight = new THREE.Mesh(new THREE.BoxGeometry(0.15, 0.15, glassD + 0.1), topFrameMat);
+    topFrameRight.position.set(glassW / 2, glassHeight + 0.5, 0);
+    dioramaGroup.add(topFrameRight);
+
+    // Raycaster User Interaction
     const raycaster = new THREE.Raycaster();
     const mouse = new THREE.Vector2();
 
@@ -419,9 +590,10 @@ export default function DioramaCanvas({
       frameId = requestAnimationFrame(animate);
       const time = (performance.now() - startAnimTime) * 0.001;
 
-      dioramaGroup.rotation.y = Math.sin(time * 0.15) * 0.05;
+      // Gentle ambient floating rotation
+      dioramaGroup.rotation.y = Math.sin(time * 0.12) * 0.04;
 
-      // Particle physics & pattern modulation
+      // Fountain Particle Physics & Patterns
       if (fountainParticlesRef.current) {
         let patternMult = 1;
         if (fountainPattern === 'Pulsing') patternMult = (Math.sin(time * 3) + 1.2) * 0.6;
@@ -441,11 +613,11 @@ export default function DioramaCanvas({
           p.position.z += p.userData.vz * speed;
           p.userData.vy -= 0.0015;
 
-          if (p.position.y < 1.1) {
+          if (p.position.y < 1.0) {
             p.position.set(
-              p.userData.originX + (Math.random() - 0.5) * 0.2,
-              1.7,
-              p.userData.originZ + (Math.random() - 0.5) * 0.2
+              p.userData.originX + (Math.random() - 0.5) * 0.25,
+              1.4,
+              p.userData.originZ + (Math.random() - 0.5) * 0.25
             );
             p.userData.vy = 0.035 + Math.random() * 0.03;
           }
@@ -466,27 +638,28 @@ export default function DioramaCanvas({
     };
   }, []);
 
-  // Update light intensity
+  // Sync Lights Intensity
   useEffect(() => {
     if (!lightsGroupRef.current) return;
-    const target = lightsOn ? (brightness / 100) * 1.5 : 0;
+    const target = lightsOn ? (brightness / 100) * 1.3 : 0;
     lightsGroupRef.current.children.forEach((l) => (l.intensity = target));
   }, [lightsOn, brightness]);
 
-  // Update Plaza Color
+  // Sync Plaza Color
   useEffect(() => {
     if (plazaMeshRef.current) {
       plazaMeshRef.current.material.color.set(circleColor);
     }
   }, [circleColor]);
 
-  // Update Fountain Water Color & Custom STL Mesh color
+  // Sync Fountain Color (both pools and classmate's STL models)
   useEffect(() => {
-    if (fountainMeshRef.current) {
-      fountainMeshRef.current.material.color.set(fountainColor);
-    }
-    if (customStlMeshRef.current) {
-      customStlMeshRef.current.material.color.set(fountainColor);
+    if (fountainMeshesRef.current && fountainMeshesRef.current.length > 0) {
+      fountainMeshesRef.current.forEach((mesh) => {
+        if (mesh && mesh.material) {
+          mesh.material.color.set(fountainColor);
+        }
+      });
     }
   }, [fountainColor]);
 
