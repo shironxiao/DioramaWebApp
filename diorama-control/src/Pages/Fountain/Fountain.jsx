@@ -4,7 +4,7 @@ import DioramaCanvas from '../../components/DioramaCanvas';
 import './Fountain.css';
 
 export default function Fountain({ appState, setAppState, showToast }) {
-  const { fountainOn, fountainStrength, fountainPattern, fountainColor } = appState;
+  const { fountainOn, fountainStrength, fountainAuxStrength, fountainForceSensorOn, fountainPattern, fountainColor } = appState;
 
   const [rgb, setRgb] = useState({ r: 119, g: 137, b: 141 });
 
@@ -19,12 +19,6 @@ export default function Fountain({ appState, setAppState, showToast }) {
     showToast(`Applied fountain color: ${hex.toUpperCase()}`);
   };
 
-  const patterns = [
-    { id: 'Normal', label: 'Normal' },
-    { id: 'Pulsing', label: 'Pulsing' },
-    { id: 'Wave', label: 'Wave' },
-    { id: 'Alternating', label: 'Alternating' }
-  ];
 
   return (
     <div className="page-container">
@@ -45,6 +39,8 @@ export default function Fountain({ appState, setAppState, showToast }) {
         fountainColor={fountainColor}
         circleColor={appState.circleColor}
         autoDimming={appState.autoDimming}
+        audioPlaying={appState.audioPlaying}
+        plazaRotationMode={appState.plazaRotationMode}
         onGateClick={() => showToast('✨ Diorama Gate Tapped!')}
       />
 
@@ -85,57 +81,58 @@ export default function Fountain({ appState, setAppState, showToast }) {
               </div>
             </div>
             <div className="strength-value-label">
-              <span>Strength</span>
+              <span>Main</span>
               <span className="font-bold">{fountainStrength}%</span>
             </div>
           </div>
 
-          <div className="card-slider-group">
+          <div className="card-slider-group mb-4">
             <input
               type="range"
               min="0"
               max="100"
               value={fountainStrength}
-              disabled={!fountainOn}
+              disabled={!fountainOn || fountainForceSensorOn}
               className="custom-range-slider teal-range"
               onChange={(e) => setAppState((prev) => ({ ...prev, fountainStrength: Number(e.target.value) }))}
             />
-            <div className="range-sub-labels">
-              <span>Low</span>
-              <span>High</span>
-              <span>High</span>
+          </div>
+          
+          <div className="strength-value-label px-5">
+            <span className="text-sm font-medium">Aux Spout</span>
+            <span className="font-bold text-sm float-right">{fountainAuxStrength}%</span>
+          </div>
+          <div className="card-slider-group mb-2">
+            <input
+              type="range"
+              min="0"
+              max="100"
+              value={fountainAuxStrength}
+              disabled={!fountainOn || fountainForceSensorOn}
+              className="custom-range-slider teal-range"
+              onChange={(e) => setAppState((prev) => ({ ...prev, fountainAuxStrength: Number(e.target.value) }))}
+            />
+          </div>
+          
+          <div className="card-footer-row border-t pt-2 mt-2">
+            <div className="title-stack">
+              <span className="footer-label font-bold">Force Sensor Control</span>
+              <span className="text-xs text-muted">Overrides sliders</span>
             </div>
+            <label className="toggle-switch">
+              <input
+                type="checkbox"
+                checked={fountainForceSensorOn}
+                disabled={!fountainOn}
+                onChange={(e) => setAppState((prev) => ({ ...prev, fountainForceSensorOn: e.target.checked }))}
+              />
+              <span className="slider round teal-toggle"></span>
+            </label>
           </div>
         </div>
       </div>
 
-      {/* Fountain Patterns Card */}
-      <div className="control-card">
-        <div className="card-header">
-          <div className="card-title-group">
-            <div className="icon-badge teal">
-              <Waves size={22} />
-            </div>
-            <h3 className="card-title">Fountain patterns</h3>
-          </div>
-        </div>
 
-        <div className="patterns-grid">
-          {patterns.map((p) => (
-            <div
-              key={p.id}
-              className={`pattern-card ${fountainPattern === p.id ? 'selected' : ''}`}
-              onClick={() => {
-                setAppState((prev) => ({ ...prev, fountainPattern: p.id }));
-                showToast(`Pattern set to ${p.label}`);
-              }}
-            >
-              <Waves className="pattern-icon" size={24} />
-              <span className="pattern-label">{p.label}</span>
-            </div>
-          ))}
-        </div>
-      </div>
 
       {/* Fountain Color Card */}
       <div className="control-card">

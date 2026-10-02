@@ -28,8 +28,7 @@ export default function SettingsPage({ appState, setAppState, showToast, onLogou
       setAppState((prev) => ({
         ...prev,
         fountainOn: true,
-        fountainStrength: 100,
-        fountainPattern: 'Pulsing'
+        fountainStrength: 100
       }));
       showToast('Reset Fountain controls to default.');
     } else if (type === 'colors') {
@@ -52,7 +51,6 @@ export default function SettingsPage({ appState, setAppState, showToast, onLogou
 
         fountainOn: true,
         fountainStrength: 100,
-        fountainPattern: 'Pulsing',
         fountainColor: '#77898D',
 
         audioPlaying: false,

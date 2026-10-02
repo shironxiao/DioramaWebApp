@@ -6,6 +6,7 @@ import Fountain from './Pages/Fountain/Fountain';
 import Audio from './Pages/Audio/Audio';
 import SettingsPage from './Pages/Settings/Settings';
 import LoginRegister from './Pages/Login&Register/LoginRegister';
+import AboutPage from './Pages/About/About';
 import { sendLightControl, sendFountainControl, sendColorControl } from './services/esp32Api';
 import './App.css';
 
@@ -26,7 +27,7 @@ function App() {
   const [appState, setAppState] = useState({
     lightsOn: true,
     brightness: 75,
-    lightingMode: 'Sound Reactive',
+    lightingMode: 'Color Adaptive',
     soundReactiveOn: true,
     micSensitivity: 50,
     reactionIntensity: 65,
@@ -35,14 +36,19 @@ function App() {
 
     fountainOn: true,
     fountainStrength: 100,
-    fountainPattern: 'Pulsing',
+    fountainAuxStrength: 75,
+    fountainForceSensorOn: false,
+
     fountainColor: '#77898D',
 
     audioPlaying: false,
     audioTrack: 'No audio selected',
     volume: 70,
 
-    circleColor: '#D4B78C'
+    circleColor: '#D4B78C',
+    rfidGateEnabled: true,
+    gateOpen: false,
+    plazaRotationMode: 'Sensor'
   });
 
   // Wrapper for updating state and syncing with physical ESP32
@@ -53,8 +59,8 @@ function App() {
       if (next.lightsOn !== prev.lightsOn || next.brightness !== prev.brightness) {
         sendLightControl(next.lightsOn, next.brightness);
       }
-      if (next.fountainOn !== prev.fountainOn || next.fountainStrength !== prev.fountainStrength || next.fountainPattern !== prev.fountainPattern) {
-        sendFountainControl(next.fountainOn, next.fountainStrength, next.fountainPattern);
+      if (next.fountainOn !== prev.fountainOn || next.fountainStrength !== prev.fountainStrength) {
+        sendFountainControl(next.fountainOn, next.fountainStrength);
       }
       if (next.fountainColor !== prev.fountainColor) {
         sendColorControl(next.fountainColor);
@@ -162,6 +168,10 @@ function App() {
               showToast={showToast}
               onLogout={handleLogout}
             />
+          )}
+
+          {activeTab === 'about' && (
+            <AboutPage setActiveTab={setActiveTab} />
           )}
         </div>
       </main>

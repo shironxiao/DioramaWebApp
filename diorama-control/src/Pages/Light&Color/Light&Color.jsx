@@ -6,7 +6,7 @@ import './Light&Color.css';
 export default function LightAndColor({ appState, setAppState, showToast }) {
   const {
     lightsOn, brightness, lightingMode, soundReactiveOn, micSensitivity,
-    reactionIntensity, autoDimming, simulatedLight, circleColor, fountainColor
+    reactionIntensity, autoDimming, simulatedLight, circleColor, fountainColor, plazaRotationMode
   } = appState;
 
   // Local state for color RGB inputs
@@ -50,6 +50,8 @@ export default function LightAndColor({ appState, setAppState, showToast }) {
         fountainColor={fountainColor}
         circleColor={circleColor}
         autoDimming={autoDimming}
+        audioPlaying={appState.audioPlaying}
+        plazaRotationMode={plazaRotationMode}
         onGateClick={() => showToast('✨ Diorama Gate Tapped!')}
       />
 
@@ -137,11 +139,11 @@ export default function LightAndColor({ appState, setAppState, showToast }) {
           </div>
 
           <div
-            className={`mode-card ${lightingMode === 'Sensor Controlled' ? 'selected' : ''}`}
-            onClick={() => setAppState((prev) => ({ ...prev, lightingMode: 'Sensor Controlled' }))}
+            className={`mode-card ${lightingMode === 'Color Adaptive' ? 'selected' : ''}`}
+            onClick={() => setAppState((prev) => ({ ...prev, lightingMode: 'Color Adaptive' }))}
           >
-            <h4 className="mode-name">Sensor Controlled</h4>
-            <p className="mode-desc">Follows ambient light</p>
+            <h4 className="mode-name">Color Adaptive</h4>
+            <p className="mode-desc">Follows color & ambient sensors</p>
           </div>
         </div>
 
@@ -241,6 +243,43 @@ export default function LightAndColor({ appState, setAppState, showToast }) {
               </div>
             </div>
           </div>
+        </div>
+      </div>
+
+      {/* SECTION 2.5: INNER CIRCLE ROTATION */}
+      <div className="section-block">
+        <h2 className="section-block-title">Inner circle rotation</h2>
+        <div className="control-card">
+          <div className="card-header">
+            <div className="card-title-group">
+              <div className="icon-badge amber">
+                <Sparkles size={20} />
+              </div>
+              <div className="title-stack">
+                <h3 className="card-title">Rotation mode</h3>
+                <span className="card-status-subtext">
+                  {plazaRotationMode === 'On' ? 'Always spinning' : plazaRotationMode === 'Off' ? 'Stopped' : 'Reacts to mic sensor'}
+                </span>
+              </div>
+            </div>
+          </div>
+          <div className="source-buttons-row">
+            {['On', 'Off', 'Sensor'].map((mode) => (
+              <button
+                key={mode}
+                className={`source-pill-btn ${plazaRotationMode === mode ? 'active' : ''}`}
+                onClick={() => {
+                  setAppState((prev) => ({ ...prev, plazaRotationMode: mode }));
+                  showToast(`Inner circle rotation: ${mode === 'Sensor' ? 'Mic sensor' : mode}`);
+                }}
+              >
+                {mode === 'Sensor' ? 'Mic Sensor' : mode}
+              </button>
+            ))}
+          </div>
+          <p className="card-description-subtext mt-2">
+            <strong>On</strong> — always rotates. <strong>Off</strong> — fully stopped. <strong>Mic Sensor</strong> — rotates only when sound is detected.
+          </p>
         </div>
       </div>
 
@@ -376,15 +415,26 @@ export default function LightAndColor({ appState, setAppState, showToast }) {
                   <span className="text-xs text-muted">#D4B78C - RGB 212, 183, 140</span>
                 </div>
               </div>
-              <button
-                className="btn-amber"
-                onClick={() => {
-                  setAppState((prev) => ({ ...prev, circleColor: '#D4B78C' }));
-                  showToast('Applied detected sensor color #D4B78C');
-                }}
-              >
-                Use detected color
-              </button>
+              <div className="sensor-actions-col flex flex-col gap-2">
+                <button
+                  className="btn-amber"
+                  onClick={() => {
+                    setAppState((prev) => ({ ...prev, circleColor: '#D4B78C' }));
+                    showToast('Applied detected sensor color #D4B78C to Circle');
+                  }}
+                >
+                  Apply to Circle
+                </button>
+                <button
+                  className="btn-amber"
+                  onClick={() => {
+                    setAppState((prev) => ({ ...prev, fountainColor: '#D4B78C' }));
+                    showToast('Applied detected sensor color #D4B78C to Fountain');
+                  }}
+                >
+                  Apply to Fountain
+                </button>
+              </div>
             </div>
           </div>
         </div>

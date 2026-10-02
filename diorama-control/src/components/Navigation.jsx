@@ -1,5 +1,5 @@
 import React from 'react';
-import { Sparkles, Settings, Home as HomeIcon, Lightbulb, Waves, Music } from 'lucide-react';
+import { Sparkles, Settings, Home as HomeIcon, Lightbulb, Waves, Music, Info } from 'lucide-react';
 
 export default function Navigation({ activeTab, setActiveTab, onSettingsClick = () => {} }) {
   return (
@@ -45,6 +45,14 @@ export default function Navigation({ activeTab, setActiveTab, onSettingsClick = 
             >
               <Music size={18} />
               <span>Audio</span>
+            </button>
+
+            <button
+              className={`nav-item ${activeTab === 'about' ? 'active' : ''}`}
+              onClick={() => setActiveTab('about')}
+            >
+              <Info size={18} />
+              <span>About</span>
             </button>
           </nav>
 
@@ -105,6 +113,13 @@ export default function Navigation({ activeTab, setActiveTab, onSettingsClick = 
           >
             <Music size={20} />
             <span>Audio</span>
+          </button>
+          <button
+            className={`pill-nav-item ${activeTab === 'about' ? 'active' : ''}`}
+            onClick={() => setActiveTab('about')}
+          >
+            <Info size={20} />
+            <span>About</span>
           </button>
         </div>
       </div>

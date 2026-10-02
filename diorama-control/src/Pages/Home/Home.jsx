@@ -6,7 +6,8 @@ import {
   Sun,
   Play,
   Pause,
-  ChevronRight
+  ChevronRight,
+  KeyRound
 } from 'lucide-react';
 import DioramaCanvas from '../../components/DioramaCanvas';
 import './Home.css';
@@ -14,9 +15,10 @@ import './Home.css';
 export default function Home({ appState, setAppState, setActiveTab, showToast }) {
   const {
     lightsOn, brightness, lightingMode,
-    fountainOn, fountainStrength, fountainPattern, fountainColor,
+    fountainOn, fountainStrength, fountainColor,
     audioPlaying, audioTrack, volume,
-    simulatedLight, autoDimming, circleColor
+    simulatedLight, autoDimming, circleColor,
+    rfidGateEnabled, gateOpen
   } = appState;
 
   return (
@@ -36,10 +38,11 @@ export default function Home({ appState, setAppState, setActiveTab, showToast })
         brightness={brightness}
         fountainOn={fountainOn}
         fountainStrength={fountainStrength}
-        fountainPattern={fountainPattern}
         fountainColor={fountainColor}
         circleColor={circleColor}
         autoDimming={autoDimming}
+        audioPlaying={audioPlaying}
+        plazaRotationMode={appState.plazaRotationMode}
         onGateClick={() => showToast('✨ Interactive Diorama: Front Gate Tapped!')}
       />
 
@@ -96,7 +99,7 @@ export default function Home({ appState, setAppState, setActiveTab, showToast })
               <div className="title-stack">
                 <h3 className="card-title">Fountain</h3>
                 <span className="card-status-subtext">
-                  {fountainOn ? `On - ${fountainPattern}` : 'Off'}
+                  {fountainOn ? 'Flowing' : 'Off'}
                 </span>
               </div>
             </div>
@@ -199,6 +202,53 @@ export default function Home({ appState, setAppState, setActiveTab, showToast })
               />
               <span className="slider round"></span>
             </label>
+          </div>
+        </div>
+
+        {/* 5. GATE ACCESS CARD */}
+        <div className="control-card">
+          <div className="card-header">
+            <div className="card-title-group">
+              <div className="icon-badge green">
+                <KeyRound size={22} />
+              </div>
+              <div className="title-stack">
+                <h3 className="card-title">Gate Access</h3>
+                <span className="card-status-subtext">
+                  {rfidGateEnabled ? 'RFID Active' : 'RFID Disabled'}
+                </span>
+              </div>
+            </div>
+          </div>
+          
+          <div className="card-footer-row border-none">
+            <span className="footer-label">Enable RFID Reader</span>
+            <label className="toggle-switch">
+              <input
+                type="checkbox"
+                checked={rfidGateEnabled}
+                onChange={(e) => {
+                  const next = e.target.checked;
+                  setAppState((prev) => ({ ...prev, rfidGateEnabled: next }));
+                  showToast(next ? 'RFID Access Enabled' : 'RFID Access Disabled');
+                }}
+              />
+              <span className="slider round"></span>
+            </label>
+          </div>
+
+          <div className="card-footer-row border-t pt-2 mt-2">
+            <span className="footer-label">Gate Status</span>
+            <button 
+              className={`btn-outline ${gateOpen ? 'active' : ''}`}
+              onClick={() => {
+                const next = !gateOpen;
+                setAppState((prev) => ({ ...prev, gateOpen: next }));
+                showToast(next ? 'Gate Opened Manually' : 'Gate Closed Manually');
+              }}
+            >
+              {gateOpen ? 'Open' : 'Closed'}
+            </button>
           </div>
         </div>
       </div>

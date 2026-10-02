@@ -8,10 +8,11 @@ export default function DioramaCanvas({
   brightness = 75,
   fountainOn = true,
   fountainStrength = 100,
-  fountainPattern = 'Pulsing',
   fountainColor = '#6bbcd9',
   circleColor = '#d9cebe',
   autoDimming = true,
+  audioPlaying = false,
+  plazaRotationMode = 'Sensor',
   onGateClick = () => {}
 }) {
   const mountRef = useRef(null);
@@ -21,6 +22,11 @@ export default function DioramaCanvas({
   const plazaMeshRef = useRef(null);
   const fountainMeshesRef = useRef([]);
   const gateRef = useRef(null);
+  
+  const propsRef = useRef({ fountainOn, fountainStrength, audioPlaying, plazaRotationMode });
+  useEffect(() => {
+    propsRef.current = { fountainOn, fountainStrength, audioPlaying, plazaRotationMode };
+  }, [fountainOn, fountainStrength, audioPlaying, plazaRotationMode]);
 
   useEffect(() => {
     const container = mountRef.current;
@@ -180,6 +186,12 @@ export default function DioramaCanvas({
 
     // 4. Central Circular Colonnade Plaza (Matching the pillar ring in reference photo)
     const plazaRadius = 2.5;
+
+    // Create Plaza Group for continuous rotation
+    const plazaGroup = new THREE.Group();
+    plazaGroup.position.set(0, 0, 0);
+    dioramaGroup.add(plazaGroup);
+
     const plazaGeo = new THREE.CylinderGeometry(plazaRadius, plazaRadius, 0.04, 48);
     const plazaMat = new THREE.MeshStandardMaterial({
       color: new THREE.Color(circleColor),
@@ -188,7 +200,7 @@ export default function DioramaCanvas({
     const plaza = new THREE.Mesh(plazaGeo, plazaMat);
     plaza.position.y = 0.52;
     plaza.receiveShadow = true;
-    dioramaGroup.add(plaza);
+    plazaGroup.add(plaza);
     plazaMeshRef.current = plaza;
 
     // Colonnade Pillar Ring
@@ -204,7 +216,7 @@ export default function DioramaCanvas({
       const pillar = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.1, 0.8, 12), pillarMat);
       pillar.position.set(px, 0.92, pz);
       pillar.castShadow = true;
-      dioramaGroup.add(pillar);
+      plazaGroup.add(pillar);
     }
 
     // Colonnade Architrave Ring
@@ -213,7 +225,31 @@ export default function DioramaCanvas({
     ringBeam.rotation.x = Math.PI / 2;
     ringBeam.position.y = 1.34;
     ringBeam.castShadow = true;
-    dioramaGroup.add(ringBeam);
+    plazaGroup.add(ringBeam);
+
+    // Add children positioned inside the circle in a circular formation
+    const numChildren = 8;
+    const childMat1 = new THREE.MeshStandardMaterial({ color: 0xef476f, roughness: 0.7 });
+    const childMat2 = new THREE.MeshStandardMaterial({ color: 0x118ab2, roughness: 0.7 });
+    const childSkinMat = new THREE.MeshStandardMaterial({ color: 0xffdcb3, roughness: 0.6 });
+    const childRadius = 1.4;
+
+    for (let i = 0; i < numChildren; i++) {
+      const angle = (i / numChildren) * Math.PI * 2;
+      const px = Math.cos(angle) * childRadius;
+      const pz = Math.sin(angle) * childRadius;
+      
+      const childBody = new THREE.Mesh(new THREE.ConeGeometry(0.12, 0.4, 8), i % 2 === 0 ? childMat1 : childMat2);
+      childBody.position.set(px, 0.74, pz);
+      childBody.castShadow = true;
+      
+      const childHead = new THREE.Mesh(new THREE.SphereGeometry(0.09, 12, 12), childSkinMat);
+      childHead.position.set(px, 1.0, pz);
+      childHead.castShadow = true;
+      
+      plazaGroup.add(childBody);
+      plazaGroup.add(childHead);
+    }
 
     // 5. Dual Fountain Basins (Left & Right) + Custom STL Model
     const fountainPositions = [
@@ -382,7 +418,6 @@ export default function DioramaCanvas({
     };
 
     dioramaGroup.add(createStoneGate(0, 4.8, 0, true)); // Front Gate
-    dioramaGroup.add(createStoneGate(0, -4.8, Math.PI)); // Back Gate
 
     // 8. Perimeter Dense Pine Trees & Shrubs (Matching reference photo dense foliage)
     const trunkMat = new THREE.MeshStandardMaterial({ color: 0x3d2b1f, roughness: 0.9 });
@@ -585,6 +620,7 @@ export default function DioramaCanvas({
 
     let frameId;
     const startAnimTime = performance.now();
+    let plazaRotationAngle = 0;
 
     const animate = () => {
       frameId = requestAnimationFrame(animate);
@@ -593,17 +629,19 @@ export default function DioramaCanvas({
       // Gentle ambient floating rotation
       dioramaGroup.rotation.y = Math.sin(time * 0.12) * 0.04;
 
-      // Fountain Particle Physics & Patterns
-      if (fountainParticlesRef.current) {
-        let patternMult = 1;
-        if (fountainPattern === 'Pulsing') patternMult = (Math.sin(time * 3) + 1.2) * 0.6;
-        else if (fountainPattern === 'Wave') patternMult = (Math.sin(time * 5) + 1.5) * 0.5;
-        else if (fountainPattern === 'Alternating') patternMult = (Math.cos(time * 2) + 1.2) * 0.6;
+      // Inner circular feature rotation based on plazaRotationMode
+      const { plazaRotationMode: rotMode, audioPlaying: isAudioPlaying } = propsRef.current;
+      if (rotMode === 'On' || (rotMode === 'Sensor' && isAudioPlaying)) {
+        plazaRotationAngle += 0.008;
+      }
+      plazaGroup.rotation.y = plazaRotationAngle;
 
-        const speed = (fountainStrength / 100) * (fountainOn ? 1 : 0) * patternMult;
+      // Fountain Particle Physics
+      if (fountainParticlesRef.current) {
+        const speed = (propsRef.current.fountainStrength / 100) * (propsRef.current.fountainOn ? 1 : 0);
 
         fountainParticlesRef.current.forEach((p) => {
-          if (!fountainOn) {
+          if (!propsRef.current.fountainOn) {
             p.visible = false;
             return;
           }

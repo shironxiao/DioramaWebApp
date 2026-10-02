@@ -1,49 +1,24 @@
-import React, { useState } from 'react';
-import { Upload, Mic, Music, Play, Pause, Trash2 } from 'lucide-react';
+import React from 'react';
+import { Music, Play, Pause } from 'lucide-react';
 import './Audio.css';
 
 export default function Audio({ appState, setAppState, showToast }) {
-  const [recordings, setRecordings] = useState([]);
-  const [isRecording, setIsRecording] = useState(false);
-  const [playingId, setPlayingId] = useState(null);
+  const { audioPlaying, audioTrack, volume } = appState;
 
-  const handleUploadAudio = (e) => {
-    const file = e.target.files && e.target.files[0];
-    if (file) {
-      const newRec = {
-        id: Date.now(),
-        name: file.name,
-        date: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-        url: URL.createObjectURL(file)
-      };
-      setRecordings((prev) => [newRec, ...prev]);
-      showToast(`Uploaded sound track: ${file.name}`);
-    }
-  };
+  const tracks = [
+    { id: 1, name: 'Nature Ambient Stream', artist: 'Built-in Audio' },
+    { id: 2, name: 'Gentle Piano', artist: 'Built-in Audio' },
+    { id: 3, name: 'Forest Birds', artist: 'Built-in Audio' },
+  ];
 
-  const toggleRecord = () => {
-    if (!isRecording) {
-      setIsRecording(true);
-      showToast('Recording started... Speak or play music');
-      setTimeout(() => {
-        setIsRecording(false);
-        const newRec = {
-          id: Date.now(),
-          name: `Voice Memo ${recordings.length + 1}`,
-          date: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-          url: '#'
-        };
-        setRecordings((prev) => [newRec, ...prev]);
-        showToast('Recorded new audio memo!');
-      }, 3500);
+  const handlePlayToggle = (trackName) => {
+    if (audioTrack === trackName && audioPlaying) {
+      setAppState(prev => ({ ...prev, audioPlaying: false }));
+      showToast('Audio paused');
     } else {
-      setIsRecording(false);
+      setAppState(prev => ({ ...prev, audioPlaying: true, audioTrack: trackName }));
+      showToast(`Playing ${trackName}`);
     }
-  };
-
-  const deleteRecording = (id) => {
-    setRecordings((prev) => prev.filter((r) => r.id !== id));
-    showToast('Deleted audio recording');
   };
 
   return (
@@ -55,80 +30,36 @@ export default function Audio({ appState, setAppState, showToast }) {
         <p className="page-subtitle">Bring a soundtrack to your little world.</p>
       </div>
 
-      {/* Card 1: Add Audio */}
-      <div className="control-card">
-        <div className="card-header">
-          <div className="card-title-group">
-            <div className="icon-badge purple">
-              <Upload size={22} />
-            </div>
-            <h3 className="card-title">Add audio</h3>
-          </div>
-        </div>
-
-        <div className="audio-actions-row">
-          <label className="btn-audio-upload">
-            <Upload size={18} />
-            <span>Upload audio</span>
-            <input type="file" accept="audio/*" className="hidden-file-input" onChange={handleUploadAudio} />
-          </label>
-
-          <button className={`btn-audio-record ${isRecording ? 'recording' : ''}`} onClick={toggleRecord}>
-            <Mic size={18} />
-            <span>{isRecording ? 'Recording...' : 'Record audio'}</span>
-          </button>
-        </div>
-      </div>
-
-      {/* Section 2: Your recordings */}
+      {/* Built-in Tracks Section */}
       <div className="section-block mt-4">
-        <h2 className="section-block-title">Your recordings</h2>
-
-        {recordings.length === 0 ? (
-          /* Empty state matching screenshot */
-          <div className="control-card empty-audio-card">
-            <div className="card-title-group">
-              <div className="icon-badge purple">
-                <Music size={22} />
-              </div>
-              <h3 className="card-title">Nothing here yet</h3>
-            </div>
-            <p className="empty-subtext">Upload or record a sound to get started.</p>
-          </div>
-        ) : (
-          <div className="recordings-list">
-            {recordings.map((rec) => (
-              <div key={rec.id} className="control-card recording-item">
+        <h2 className="section-block-title">Pre-recorded Tracks</h2>
+        <div className="recordings-list">
+          {tracks.map((track) => {
+            const isPlaying = audioTrack === track.name && audioPlaying;
+            return (
+              <div key={track.id} className="control-card recording-item">
                 <div className="rec-info-group">
                   <div className="icon-badge purple small">
                     <Music size={18} />
                   </div>
                   <div className="title-stack">
-                    <h4 className="rec-name">{rec.name}</h4>
-                    <span className="rec-date">{rec.date}</span>
+                    <h4 className="rec-name">{track.name}</h4>
+                    <span className="rec-date">{track.artist}</span>
                   </div>
                 </div>
 
                 <div className="rec-actions">
                   <button
                     className="audio-play-circle-btn purple-play"
-                    onClick={() => {
-                      const nextPlaying = playingId === rec.id ? null : rec.id;
-                      setPlayingId(nextPlaying);
-                      showToast(nextPlaying ? `Playing ${rec.name}` : 'Audio stopped');
-                    }}
+                    onClick={() => handlePlayToggle(track.name)}
                   >
-                    {playingId === rec.id ? <Pause size={16} /> : <Play size={16} className="play-icon-offset" />}
-                  </button>
-
-                  <button className="btn-delete" onClick={() => deleteRecording(rec.id)}>
-                    <Trash2 size={16} />
+                    {isPlaying ? <Pause size={16} /> : <Play size={16} className="play-icon-offset" />}
                   </button>
                 </div>
               </div>
-            ))}
-          </div>
-        )}
+            );
+          })}
+        </div>
       </div>
     </div>
   );
