@@ -6,6 +6,7 @@ import Fountain from './Pages/Fountain/Fountain';
 import Audio from './Pages/Audio/Audio';
 import SettingsPage from './Pages/Settings/Settings';
 import LoginRegister from './Pages/Login&Register/LoginRegister';
+import { sendLightControl, sendFountainControl, sendColorControl } from './services/esp32Api';
 import './App.css';
 
 function App() {
@@ -43,6 +44,25 @@ function App() {
 
     circleColor: '#D4B78C'
   });
+
+  // Wrapper for updating state and syncing with physical ESP32
+  const updateAppState = (updater) => {
+    setAppState((prev) => {
+      const next = typeof updater === 'function' ? updater(prev) : { ...prev, ...updater };
+      
+      if (next.lightsOn !== prev.lightsOn || next.brightness !== prev.brightness) {
+        sendLightControl(next.lightsOn, next.brightness);
+      }
+      if (next.fountainOn !== prev.fountainOn || next.fountainStrength !== prev.fountainStrength || next.fountainPattern !== prev.fountainPattern) {
+        sendFountainControl(next.fountainOn, next.fountainStrength, next.fountainPattern);
+      }
+      if (next.fountainColor !== prev.fountainColor) {
+        sendColorControl(next.fountainColor);
+      }
+
+      return next;
+    });
+  };
 
   const showToast = (msg) => {
     setToastMessage(msg);
@@ -105,7 +125,7 @@ function App() {
           {activeTab === 'home' && (
             <Home
               appState={appState}
-              setAppState={setAppState}
+              setAppState={updateAppState}
               setActiveTab={setActiveTab}
               showToast={showToast}
             />
@@ -114,7 +134,7 @@ function App() {
           {activeTab === 'lights' && (
             <LightAndColor
               appState={appState}
-              setAppState={setAppState}
+              setAppState={updateAppState}
               showToast={showToast}
             />
           )}
@@ -122,7 +142,7 @@ function App() {
           {activeTab === 'fountain' && (
             <Fountain
               appState={appState}
-              setAppState={setAppState}
+              setAppState={updateAppState}
               showToast={showToast}
             />
           )}
@@ -130,7 +150,7 @@ function App() {
           {activeTab === 'audio' && (
             <Audio
               appState={appState}
-              setAppState={setAppState}
+              setAppState={updateAppState}
               showToast={showToast}
             />
           )}
@@ -138,7 +158,7 @@ function App() {
           {activeTab === 'settings' && (
             <SettingsPage
               appState={appState}
-              setAppState={setAppState}
+              setAppState={updateAppState}
               showToast={showToast}
               onLogout={handleLogout}
             />
