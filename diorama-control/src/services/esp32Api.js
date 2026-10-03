@@ -67,6 +67,18 @@ export const sendColorControl = (hexColor) => {
   return sendEspCommand('/api/color', { r, g, b });
 };
 
+export const sendGateControl = (isOpen) => {
+  return sendEspCommand('/api/gate', {
+    state: isOpen ? 'open' : 'closed'
+  });
+};
+
+export const sendModeControl = (mode) => {
+  return sendEspCommand('/api/mode', {
+    mode: mode
+  });
+};
+
 // Read sound sensor from ESP32: returns { detected: bool, level: 0-1023 }
 export const getSoundLevel = async () => {
   const isSelfHosted = window.location.hostname === esp32Ip || (window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1');

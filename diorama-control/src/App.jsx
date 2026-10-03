@@ -7,7 +7,13 @@ import Audio from './Pages/Audio/Audio';
 import SettingsPage from './Pages/Settings/Settings';
 import LoginRegister from './Pages/Login&Register/LoginRegister';
 import AboutPage from './Pages/About/About';
-import { sendLightControl, sendFountainControl, sendColorControl } from './services/esp32Api';
+import {
+  sendLightControl,
+  sendFountainControl,
+  sendColorControl,
+  sendGateControl,
+  sendModeControl
+} from './services/esp32Api';
 import './App.css';
 
 function App() {
@@ -70,6 +76,12 @@ function App() {
       }
       if (next.fountainColor !== prev.fountainColor) {
         sendColorControl(next.fountainColor);
+      }
+      if (next.gateOpen !== prev.gateOpen) {
+        sendGateControl(next.gateOpen);
+      }
+      if (next.lightingMode !== prev.lightingMode) {
+        sendModeControl(next.lightingMode);
       }
 
       return next;

@@ -1,17 +1,28 @@
 import React, { useState } from 'react';
 import { Wifi, Cpu, SlidersHorizontal, User, RotateCcw, LogOut } from 'lucide-react';
+import { getEsp32Ip, setEsp32Ip } from '../../services/esp32Api';
 import './Settings.css';
 
 export default function SettingsPage({ appState, setAppState, showToast, onLogout }) {
   const [controlSource, setControlSource] = useState('Web App');
   const [isConnected, setIsConnected] = useState(false);
+  const [ipAddress, setIpAddress] = useState(() => getEsp32Ip());
 
-  const handleReconnect = () => {
-    showToast('Attempting device pairing...');
-    setTimeout(() => {
-      setIsConnected(true);
-      showToast('Device connected successfully!');
-    }, 1500);
+  const handleReconnect = async () => {
+    showToast(`Pinging ESP32 at ${ipAddress}...`);
+    try {
+      const response = await fetch(`http://${ipAddress}/api/sound`, { mode: 'cors', signal: AbortSignal.timeout(2500) });
+      if (response.ok) {
+        setIsConnected(true);
+        showToast('✅ ESP32 Connected successfully!');
+      } else {
+        setIsConnected(false);
+        showToast(`ESP32 reachable but responded with status ${response.status}`);
+      }
+    } catch (e) {
+      setIsConnected(false);
+      showToast(`Could not reach ${ipAddress} (Check WiFi/Hotspot)`);
+    }
   };
 
   const handleReset = (type) => {
@@ -81,23 +92,48 @@ export default function SettingsPage({ appState, setAppState, showToast, onLogou
               <div className="icon-badge sage">
                 <Wifi size={22} />
               </div>
-              <h3 className="card-title">Connection</h3>
+              <h3 className="card-title">ESP32 Connection</h3>
             </div>
           </div>
 
           <div className="connection-status-row">
             <span className={`status-gold-dot ${isConnected ? 'connected' : ''}`}></span>
             <span className="status-gold-text">
-              {isConnected ? 'Connected • Live Hardware' : 'Not connected · Preview mode'}
+              {isConnected ? 'Connected • Live ESP32' : 'Preview / Offline mode'}
             </span>
           </div>
 
-          <p className="card-description-subtext">
-            Physical device pairing is not configured yet. Controls currently update this preview.
+          {/* ESP32 IP Input */}
+          <div className="esp-ip-input-group mt-2">
+            <label className="text-xs font-bold text-muted">ESP32 IP ADDRESS</label>
+            <div className="flex gap-2 mt-1">
+              <input
+                type="text"
+                value={ipAddress}
+                onChange={(e) => setIpAddress(e.target.value)}
+                placeholder="192.168.100.138"
+                className="esp-ip-input"
+              />
+              <button
+                type="button"
+                className="btn-save-ip"
+                onClick={() => {
+                  setEsp32Ip(ipAddress);
+                  showToast(`Saved ESP32 IP: ${ipAddress}`);
+                  handleReconnect();
+                }}
+              >
+                Save
+              </button>
+            </div>
+          </div>
+
+          <p className="card-description-subtext mt-2">
+            Enter your ESP32's local WiFi IP. All slider and button commands will be sent to this address.
           </p>
 
-          <button className="btn-card-action" onClick={handleReconnect}>
-            {isConnected ? 'Disconnect' : 'Reconnect'}
+          <button className="btn-card-action mt-2" onClick={handleReconnect}>
+            {isConnected ? 'Disconnect' : 'Test Connection'}
           </button>
         </div>
 
