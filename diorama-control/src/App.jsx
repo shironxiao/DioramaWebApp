@@ -12,7 +12,12 @@ import {
   sendFountainControl,
   sendColorControl,
   sendGateControl,
-  sendModeControl
+  sendModeControl,
+  sendVolumeControl,
+  sendSoundReactive,
+  sendForceSensorControl,
+  sendAudioPlay,
+  sendAudioPause
 } from './services/esp32Api';
 import './App.css';
 
@@ -82,6 +87,15 @@ function App() {
       }
       if (next.lightingMode !== prev.lightingMode) {
         sendModeControl(next.lightingMode);
+      }
+      if (next.volume !== prev.volume) {
+        sendVolumeControl(next.volume);
+      }
+      if (next.soundReactiveOn !== prev.soundReactiveOn || next.reactionIntensity !== prev.reactionIntensity) {
+        sendSoundReactive(next.soundReactiveOn, next.reactionIntensity);
+      }
+      if (next.fountainForceSensorOn !== prev.fountainForceSensorOn) {
+        sendForceSensorControl(next.fountainForceSensorOn);
       }
 
       return next;

@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Wifi, Cpu, SlidersHorizontal, User, RotateCcw, LogOut } from 'lucide-react';
-import { getEsp32Ip, setEsp32Ip } from '../../services/esp32Api';
+import { getEsp32Ip, setEsp32Ip, sendControlSource } from '../../services/esp32Api';
 import './Settings.css';
 
 export default function SettingsPage({ appState, setAppState, showToast, onLogout }) {
@@ -190,6 +190,7 @@ export default function SettingsPage({ appState, setAppState, showToast, onLogou
                 className={`source-pill-btn ${controlSource === src ? 'active' : ''}`}
                 onClick={() => {
                   setControlSource(src);
+                  sendControlSource(src);
                   showToast(`Control source switched to ${src}`);
                 }}
               >

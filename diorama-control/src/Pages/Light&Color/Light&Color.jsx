@@ -12,6 +12,7 @@ import {
 } from 'lucide-react';
 import DioramaCanvas from '../../components/DioramaCanvas';
 import ColorPicker from '../../components/ColorPicker';
+import { scanColorSensor } from '../../services/esp32Api';
 import './Light&Color.css';
 
 const LIGHTING_MODES = [
@@ -93,19 +94,19 @@ export default function LightAndColor({ appState, setAppState, showToast }) {
     }
   };
 
-  // Scan Color Sensor Handler
-  const handleScanColor = () => {
+  // Scan Color Sensor Handler — reads from TCS3200 via ESP32
+  const handleScanColor = async () => {
     if (isScanning) return;
     setIsScanning(true);
     showToast('🔍 TCS3200 Color Sensor scanning target object...');
-
-    setTimeout(() => {
-      const colors = ['#D4B78C', '#4A8C5F', '#3B9DB3', '#E06D53', '#8E67B8', '#E6A14A', '#00A896'];
-      const scannedHex = colors[Math.floor(Math.random() * colors.length)];
+    const scannedHex = await scanColorSensor();
+    if (scannedHex) {
       setCurrentColor(scannedHex);
-      setIsScanning(false);
       showToast(`✨ Sensor scanned ${scannedHex}! Choose target below to apply.`);
-    }, 1500);
+    } else {
+      showToast('⚠️ Color sensor did not respond. Check ESP32 connection.');
+    }
+    setIsScanning(false);
   };
 
   // Apply Color to Target Handler: 'all', 'left_fountain', 'right_fountain', 'center'

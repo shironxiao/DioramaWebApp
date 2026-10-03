@@ -11,6 +11,7 @@ import {
   Unlock
 } from 'lucide-react';
 import DioramaCanvas from '../../components/DioramaCanvas';
+import { sendAudioPlay, sendAudioPause } from '../../services/esp32Api';
 import './Home.css';
 
 export default function Home({ appState, setAppState, setActiveTab, showToast }) {
@@ -145,14 +146,23 @@ export default function Home({ appState, setAppState, setActiveTab, showToast })
             </div>
             <button
               className="audio-play-circle-btn"
-              onClick={() => {
+              onClick={async () => {
                 const next = !audioPlaying;
-                setAppState((prev) => ({
-                  ...prev,
-                  audioPlaying: next,
-                  audioTrack: next ? 'Nature Ambient Stream' : 'No audio selected'
-                }));
-                showToast(next ? 'Playing Nature Ambient Stream' : 'Audio Paused');
+                if (next) {
+                  // Use last known track, or fall back to first track on the SD card
+                  const track = audioTrack !== 'No audio selected' ? audioTrack : '001.mp3';
+                  await sendAudioPlay(track);
+                  setAppState((prev) => ({
+                    ...prev,
+                    audioPlaying: true,
+                    audioTrack: track
+                  }));
+                  showToast(`Playing ${track}`);
+                } else {
+                  await sendAudioPause();
+                  setAppState((prev) => ({ ...prev, audioPlaying: false }));
+                  showToast('Audio Paused');
+                }
               }}
             >
               {audioPlaying ? <Pause size={16} /> : <Play size={16} className="play-icon-offset" />}
