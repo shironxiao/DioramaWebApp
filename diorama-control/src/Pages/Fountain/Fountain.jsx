@@ -1,24 +1,31 @@
 import React, { useState } from 'react';
-import { Waves, Droplet, Palette } from 'lucide-react';
+import { Waves, Droplet } from 'lucide-react';
 import DioramaCanvas from '../../components/DioramaCanvas';
 import './Fountain.css';
 
 export default function Fountain({ appState, setAppState, showToast }) {
   const { fountainOn, fountainStrength, fountainAuxStrength, fountainForceSensorOn, fountainPattern, fountainColor } = appState;
+  const [strengthTarget, setStrengthTarget] = useState('both'); // 'both', 'left', 'right'
+  const [sliderValue, setSliderValue] = useState(fountainStrength);
 
-  const [rgb, setRgb] = useState({ r: 119, g: 137, b: 141 });
-
-  const hexFromRgb = (r, g, b) => {
-    const toHex = (c) => Math.max(0, Math.min(255, c)).toString(16).padStart(2, '0');
-    return `#${toHex(r)}${toHex(g)}${toHex(b)}`;
+  // Apply Strength to Target Handler
+  const applyStrengthToTarget = (target) => {
+    setAppState((prev) => {
+      const next = { ...prev };
+      if (target === 'both') {
+        next.fountainStrength = sliderValue;
+        next.fountainAuxStrength = sliderValue;
+        showToast(`✨ Applied ${sliderValue}% water strength to BOTH fountains!`);
+      } else if (target === 'left') {
+        next.fountainStrength = sliderValue;
+        showToast(`✨ Applied ${sliderValue}% water strength to Left Fountain!`);
+      } else if (target === 'right') {
+        next.fountainAuxStrength = sliderValue;
+        showToast(`✨ Applied ${sliderValue}% water strength to Right Fountain!`);
+      }
+      return next;
+    });
   };
-
-  const applyFountainColor = () => {
-    const hex = hexFromRgb(rgb.r, rgb.g, rgb.b);
-    setAppState((prev) => ({ ...prev, fountainColor: hex }));
-    showToast(`Applied fountain color: ${hex.toUpperCase()}`);
-  };
-
 
   return (
     <div className="page-container">
@@ -35,157 +42,159 @@ export default function Fountain({ appState, setAppState, showToast }) {
         brightness={appState.brightness}
         fountainOn={fountainOn}
         fountainStrength={fountainStrength}
+        fountainAuxStrength={fountainAuxStrength}
+        fountainForceSensorOn={fountainForceSensorOn}
         fountainPattern={fountainPattern}
         fountainColor={fountainColor}
         circleColor={appState.circleColor}
         autoDimming={appState.autoDimming}
         audioPlaying={appState.audioPlaying}
-        plazaRotationMode={appState.plazaRotationMode}
         onGateClick={() => showToast('✨ Diorama Gate Tapped!')}
       />
 
-      {/* Top 2 Control Cards: Fountain Power & Water Strength */}
-      <div className="controls-grid">
-        {/* Fountain power */}
-        <div className="control-card">
-          <div className="card-header">
-            <div className="card-title-group">
-              <div className="icon-badge teal">
-                <Waves size={22} />
-              </div>
-              <div className="title-stack">
-                <h3 className="card-title">Fountain power</h3>
-                <span className="card-status-subtext">{fountainOn ? 'Flowing' : 'Off'}</span>
-              </div>
-            </div>
-            <label className="toggle-switch">
-              <input
-                type="checkbox"
-                checked={fountainOn}
-                onChange={(e) => setAppState((prev) => ({ ...prev, fountainOn: e.target.checked }))}
-              />
-              <span className="slider round teal-toggle"></span>
-            </label>
-          </div>
-        </div>
-
-        {/* Water strength */}
-        <div className="control-card">
-          <div className="card-header">
-            <div className="card-title-group">
-              <div className="icon-badge teal">
-                <Droplet size={22} />
-              </div>
-              <div className="title-stack">
-                <h3 className="card-title">Water strength</h3>
-              </div>
-            </div>
-            <div className="strength-value-label">
-              <span>Main</span>
-              <span className="font-bold">{fountainStrength}%</span>
-            </div>
-          </div>
-
-          <div className="card-slider-group mb-4">
-            <input
-              type="range"
-              min="0"
-              max="100"
-              value={fountainStrength}
-              disabled={!fountainOn || fountainForceSensorOn}
-              className="custom-range-slider teal-range"
-              onChange={(e) => setAppState((prev) => ({ ...prev, fountainStrength: Number(e.target.value) }))}
-            />
-          </div>
-          
-          <div className="strength-value-label px-5">
-            <span className="text-sm font-medium">Aux Spout</span>
-            <span className="font-bold text-sm float-right">{fountainAuxStrength}%</span>
-          </div>
-          <div className="card-slider-group mb-2">
-            <input
-              type="range"
-              min="0"
-              max="100"
-              value={fountainAuxStrength}
-              disabled={!fountainOn || fountainForceSensorOn}
-              className="custom-range-slider teal-range"
-              onChange={(e) => setAppState((prev) => ({ ...prev, fountainAuxStrength: Number(e.target.value) }))}
-            />
-          </div>
-          
-          <div className="card-footer-row border-t pt-2 mt-2">
-            <div className="title-stack">
-              <span className="footer-label font-bold">Force Sensor Control</span>
-              <span className="text-xs text-muted">Overrides sliders</span>
-            </div>
-            <label className="toggle-switch">
-              <input
-                type="checkbox"
-                checked={fountainForceSensorOn}
-                disabled={!fountainOn}
-                onChange={(e) => setAppState((prev) => ({ ...prev, fountainForceSensorOn: e.target.checked }))}
-              />
-              <span className="slider round teal-toggle"></span>
-            </label>
-          </div>
-        </div>
-      </div>
-
-
-
-      {/* Fountain Color Card */}
+      {/* Water Strength Card with target selection + Force Sensor */}
       <div className="control-card">
         <div className="card-header">
           <div className="card-title-group">
             <div className="icon-badge teal">
-              <Palette size={22} />
+              <Droplet size={22} />
             </div>
-            <h3 className="card-title">Fountain color</h3>
+            <div className="title-stack">
+              <h3 className="card-title">Water strength</h3>
+              <span className="card-status-subtext">
+                {fountainForceSensorOn
+                  ? 'Driven by Force Sensor'
+                  : `Active: ${strengthTarget === 'both' ? 'Both Fountains' : strengthTarget === 'left' ? 'Left Fountain' : 'Right Fountain'}`}
+              </span>
+            </div>
+          </div>
+          <div className="strength-value-label">
+            <span className="font-bold text-lg">
+              {strengthTarget === 'both'
+                ? `${fountainStrength}% / ${fountainAuxStrength}%`
+                : strengthTarget === 'left'
+                ? `${fountainStrength}%`
+                : `${fountainAuxStrength}%`}
+            </span>
           </div>
         </div>
 
-        <div className="color-picker-flex">
-          <div
-            className="color-swatch-box"
-            style={{ backgroundColor: hexFromRgb(rgb.r, rgb.g, rgb.b) }}
-          ></div>
+        {/* Slider */}
+        <div className="card-slider-group mb-2">
+          <input
+            type="range"
+            min="0"
+            max="100"
+            value={
+              strengthTarget === 'both'
+                ? sliderValue
+                : strengthTarget === 'left'
+                ? fountainStrength
+                : fountainAuxStrength
+            }
+            disabled={fountainForceSensorOn}
+            className="custom-range-slider teal-range"
+            onChange={(e) => {
+              const val = Number(e.target.value);
+              setSliderValue(val);
+              setAppState((prev) => {
+                const next = { ...prev };
+                if (strengthTarget === 'both') {
+                  next.fountainStrength = val;
+                  next.fountainAuxStrength = val;
+                } else if (strengthTarget === 'left') {
+                  next.fountainStrength = val;
+                } else if (strengthTarget === 'right') {
+                  next.fountainAuxStrength = val;
+                }
+                return next;
+              });
+            }}
+          />
+        </div>
 
-          <div className="rgb-inputs-group">
-            <span className="rgb-label-title">RGB values</span>
-            <div className="rgb-fields-row">
-              <div className="field">
-                <span>R</span>
-                <input
-                  type="number"
-                  value={rgb.r}
-                  onChange={(e) => setRgb({ ...rgb, r: Number(e.target.value) })}
-                />
-              </div>
-              <div className="field">
-                <span>G</span>
-                <input
-                  type="number"
-                  value={rgb.g}
-                  onChange={(e) => setRgb({ ...rgb, g: Number(e.target.value) })}
-                />
-              </div>
-              <div className="field">
-                <span>B</span>
-                <input
-                  type="number"
-                  value={rgb.b}
-                  onChange={(e) => setRgb({ ...rgb, b: Number(e.target.value) })}
-                />
-              </div>
-            </div>
+        {/* Target Selection & Apply Buttons */}
+        <div className="apply-targets-section mt-3">
+          <span className="apply-targets-header">APPLY STRENGTH TO:</span>
+          <div className="apply-targets-grid">
+            <button
+              type="button"
+              className={`btn-target-apply ${strengthTarget === 'both' ? 'active-target-btn' : ''}`}
+              onClick={() => {
+                setStrengthTarget('both');
+                applyStrengthToTarget('both');
+              }}
+            >
+              <span className="target-title">Both Fountains</span>
+              <span className="target-sub">{fountainStrength}% &amp; {fountainAuxStrength}%</span>
+            </button>
+
+            <button
+              type="button"
+              className={`btn-target-apply ${strengthTarget === 'left' ? 'active-target-btn' : ''}`}
+              onClick={() => {
+                setStrengthTarget('left');
+                applyStrengthToTarget('left');
+              }}
+            >
+              <span className="target-title">Left Fountain</span>
+              <span className="target-sub">{fountainStrength}%</span>
+            </button>
+
+            <button
+              type="button"
+              className={`btn-target-apply ${strengthTarget === 'right' ? 'active-target-btn' : ''}`}
+              onClick={() => {
+                setStrengthTarget('right');
+                applyStrengthToTarget('right');
+              }}
+            >
+              <span className="target-title">Right Fountain</span>
+              <span className="target-sub">{fountainAuxStrength}%</span>
+            </button>
           </div>
         </div>
 
-        <div className="color-card-footer">
-          <span className="hex-display">{hexFromRgb(rgb.r, rgb.g, rgb.b).toUpperCase()}</span>
-          <button className="btn-teal" onClick={applyFountainColor}>Apply color</button>
+        {/* Force Sensor Toggle Row */}
+        <div className="card-footer-row border-t pt-3 mt-3">
+          <div className="title-stack">
+            <span className="footer-label font-bold">Force Sensor Control</span>
+            <span className="text-xs text-muted">
+              {fountainForceSensorOn ? 'Overrides sliders with pressure' : 'Enable FSR pressure sensor'}
+            </span>
+          </div>
+          <label className="toggle-switch">
+            <input
+              type="checkbox"
+              checked={fountainForceSensorOn}
+              disabled={!fountainOn}
+              onChange={(e) => {
+                const on = e.target.checked;
+                setAppState((prev) => ({ ...prev, fountainForceSensorOn: on }));
+                showToast(on ? '⚡ Force Sensor ON: Pressure controls fountain strength' : 'Force Sensor OFF: Sliders restored');
+              }}
+            />
+            <span className="slider round teal-toggle"></span>
+          </label>
         </div>
+
+        {/* Force Sensor Active Status */}
+        {fountainForceSensorOn && (
+          <div className="force-sensor-status-box mt-3">
+            <div className="force-status-header">
+              <span className="force-status-tag">
+                <span className="scanning-dot green"></span> SENSOR ACTIVE
+              </span>
+              <span className="force-val-label">Auto Flow Control</span>
+            </div>
+            <p className="force-status-desc">
+              Physical force sensor is active. Pressing the FSR sensor dynamically controls fountain spray height.
+            </p>
+            <div className="force-meter-bar-wrap">
+              <div className="force-meter-bar-fill"></div>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

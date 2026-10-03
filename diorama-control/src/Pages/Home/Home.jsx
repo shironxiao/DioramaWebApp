@@ -1,13 +1,14 @@
-import React from 'react';
+import React, { useState } from 'react';
 import {
   Lightbulb,
   Waves,
   Music,
-  Sun,
   Play,
   Pause,
   ChevronRight,
-  KeyRound
+  Fingerprint,
+  Lock,
+  Unlock
 } from 'lucide-react';
 import DioramaCanvas from '../../components/DioramaCanvas';
 import './Home.css';
@@ -17,18 +18,31 @@ export default function Home({ appState, setAppState, setActiveTab, showToast })
     lightsOn, brightness, lightingMode,
     fountainOn, fountainStrength, fountainColor,
     audioPlaying, audioTrack, volume,
-    simulatedLight, autoDimming, circleColor,
-    rfidGateEnabled, gateOpen
+    autoDimming, circleColor, gateOpen
   } = appState;
+
+  const [isScanning, setIsScanning] = useState(false);
+
+  const handleBiometricScan = () => {
+    if (isScanning) return;
+    setIsScanning(true);
+    showToast('🔍 Biometric sensor scanning fingerprint...');
+    setTimeout(() => {
+      const newGateState = !gateOpen;
+      setAppState((prev) => ({ ...prev, gateOpen: newGateState }));
+      setIsScanning(false);
+      showToast(newGateState ? '✅ Fingerprint verified! Gate opened.' : '🔒 Fingerprint verified! Gate closed.');
+    }, 1800);
+  };
 
   return (
     <div className="page-container">
       {/* Header Section */}
       <div className="page-header-text">
-        <div className="section-tag">YOUR LITTLE WORLD</div>
-        <h1 className="page-main-title">My Diorama</h1>
+        <div className="section-tag">STA. ELENA, CAMARINES NORTE</div>
+        <h1 className="page-main-title">Silvestre del Moro Park</h1>
         <p className="page-subtitle">
-          Watch your miniature world come alive as you tweak it.
+          Control and explore the miniature recreation of this iconic local landmark.
         </p>
       </div>
 
@@ -42,11 +56,10 @@ export default function Home({ appState, setAppState, setActiveTab, showToast })
         circleColor={circleColor}
         autoDimming={autoDimming}
         audioPlaying={audioPlaying}
-        plazaRotationMode={appState.plazaRotationMode}
         onGateClick={() => showToast('✨ Interactive Diorama: Front Gate Tapped!')}
       />
 
-      {/* 4 Control Cards Grid */}
+      {/* 3 Control Cards Grid */}
       <div className="controls-grid">
         {/* 1. LIGHTS CARD */}
         <div className={`control-card ${lightsOn ? 'active-card' : ''}`}>
@@ -112,22 +125,6 @@ export default function Home({ appState, setAppState, setActiveTab, showToast })
               <span className="slider round"></span>
             </label>
           </div>
-
-          <div className="card-slider-group">
-            <div className="slider-label-row">
-              <span>Strength</span>
-              <span className="value-label">{fountainStrength}%</span>
-            </div>
-            <input
-              type="range"
-              min="0"
-              max="100"
-              value={fountainStrength}
-              disabled={!fountainOn}
-              className="custom-range-slider"
-              onChange={(e) => setAppState((prev) => ({ ...prev, fountainStrength: Number(e.target.value) }))}
-            />
-          </div>
         </div>
 
         {/* 3. AUDIO CARD */}
@@ -174,82 +171,49 @@ export default function Home({ appState, setAppState, setActiveTab, showToast })
           </div>
         </div>
 
-        {/* 4. AMBIENT LIGHT CARD */}
-        <div className="control-card">
-          <div className="card-header">
-            <div className="card-title-group" onClick={() => setActiveTab('lights')}>
-              <div className="icon-badge green">
-                <Sun size={22} />
-              </div>
-              <div className="title-stack">
-                <h3 className="card-title">Ambient Light</h3>
-              </div>
-            </div>
-          </div>
-
-          <div className="ambient-metric-row">
-            <span className="metric-large">{simulatedLight}%</span>
-            <span className="metric-subtext">simulated reading</span>
-          </div>
-
-          <div className="card-footer-row">
-            <span className="footer-label">Auto dimming</span>
-            <label className="toggle-switch">
-              <input
-                type="checkbox"
-                checked={autoDimming}
-                onChange={(e) => setAppState((prev) => ({ ...prev, autoDimming: e.target.checked }))}
-              />
-              <span className="slider round"></span>
-            </label>
-          </div>
-        </div>
-
-        {/* 5. GATE ACCESS CARD */}
-        <div className="control-card">
+        {/* 4. BIOMETRIC GATE CARD */}
+        <div className={`control-card biometric-gate-card ${gateOpen ? 'gate-open-card' : ''} ${isScanning ? 'gate-scanning-card' : ''}`}>
           <div className="card-header">
             <div className="card-title-group">
-              <div className="icon-badge green">
-                <KeyRound size={22} />
+              <div className={`icon-badge ${gateOpen ? 'gate-icon-open' : 'gate-icon-closed'}`}>
+                {gateOpen ? <Unlock size={22} /> : <Lock size={22} />}
               </div>
               <div className="title-stack">
                 <h3 className="card-title">Gate Access</h3>
                 <span className="card-status-subtext">
-                  {rfidGateEnabled ? 'RFID Active' : 'RFID Disabled'}
+                  {isScanning ? 'Scanning fingerprint...' : gateOpen ? '● Open' : '● Closed'}
                 </span>
               </div>
             </div>
-          </div>
-          
-          <div className="card-footer-row border-none">
-            <span className="footer-label">Enable RFID Reader</span>
-            <label className="toggle-switch">
-              <input
-                type="checkbox"
-                checked={rfidGateEnabled}
-                onChange={(e) => {
-                  const next = e.target.checked;
-                  setAppState((prev) => ({ ...prev, rfidGateEnabled: next }));
-                  showToast(next ? 'RFID Access Enabled' : 'RFID Access Disabled');
-                }}
-              />
-              <span className="slider round"></span>
-            </label>
+            <div className={`gate-status-badge ${gateOpen ? 'open' : 'closed'}`}>
+              {gateOpen ? 'OPEN' : 'LOCKED'}
+            </div>
           </div>
 
-          <div className="card-footer-row border-t pt-2 mt-2">
-            <span className="footer-label">Gate Status</span>
-            <button 
-              className={`btn-outline ${gateOpen ? 'active' : ''}`}
-              onClick={() => {
-                const next = !gateOpen;
-                setAppState((prev) => ({ ...prev, gateOpen: next }));
-                showToast(next ? 'Gate Opened Manually' : 'Gate Closed Manually');
-              }}
-            >
-              {gateOpen ? 'Open' : 'Closed'}
-            </button>
-          </div>
+          {/* Biometric Scanner Button */}
+          <button
+            id="biometric-scan-btn"
+            className={`biometric-scan-btn ${isScanning ? 'scanning' : ''} ${gateOpen ? 'gate-is-open' : ''}`}
+            onClick={handleBiometricScan}
+            disabled={isScanning}
+            aria-label="Biometric fingerprint scanner to open or close the gate"
+          >
+            <div className="biometric-inner">
+              <Fingerprint
+                size={40}
+                className={`fingerprint-icon ${isScanning ? 'fp-scanning' : ''}`}
+                strokeWidth={1.5}
+              />
+              <span className="biometric-label">
+                {isScanning
+                  ? 'Scanning...'
+                  : gateOpen
+                  ? 'Tap to Close Gate'
+                  : 'Tap to Open Gate'}
+              </span>
+            </div>
+            {isScanning && <div className="biometric-scan-ring"></div>}
+          </button>
         </div>
       </div>
 
@@ -261,7 +225,7 @@ export default function Home({ appState, setAppState, setActiveTab, showToast })
           showToast('Navigating to Lights & Colors');
         }}
       >
-        <span>Tip: open Lights & Colors to change colors and modes</span>
+        <span>Tip: open Lights &amp; Colors to change colors and modes</span>
         <ChevronRight size={20} className="tip-arrow" />
       </div>
     </div>

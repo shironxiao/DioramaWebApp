@@ -2,17 +2,21 @@ import React, { useEffect, useRef } from 'react';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { STLLoader } from 'three/examples/jsm/loaders/STLLoader.js';
+import { getSoundLevel, getForceLevel } from '../services/esp32Api';
 
 export default function DioramaCanvas({
   lightsOn = true,
   brightness = 75,
+  lightingMode = 'Basic',
+  soundReactiveOn = false,
   fountainOn = true,
   fountainStrength = 100,
+  fountainAuxStrength = 75,
+  fountainForceSensorOn = false,
   fountainColor = '#6bbcd9',
   circleColor = '#d9cebe',
   autoDimming = true,
   audioPlaying = false,
-  plazaRotationMode = 'Sensor',
   onGateClick = () => {}
 }) {
   const mountRef = useRef(null);
@@ -22,11 +26,108 @@ export default function DioramaCanvas({
   const plazaMeshRef = useRef(null);
   const fountainMeshesRef = useRef([]);
   const gateRef = useRef(null);
+  // Sound sensor data polled from ESP32
+  const soundDataRef = useRef({ detected: false, level: 0 });
+  // Force sensor data polled from ESP32
+  const forceDataRef = useRef({ active: false, level: 0, strength: 75 });
   
-  const propsRef = useRef({ fountainOn, fountainStrength, audioPlaying, plazaRotationMode });
+  const propsRef = useRef({
+    fountainOn,
+    fountainStrength,
+    fountainAuxStrength,
+    fountainForceSensorOn,
+    fountainColor,
+    circleColor,
+    audioPlaying,
+    lightingMode,
+    soundReactiveOn,
+    lightsOn,
+    brightness
+  });
+
   useEffect(() => {
-    propsRef.current = { fountainOn, fountainStrength, audioPlaying, plazaRotationMode };
-  }, [fountainOn, fountainStrength, audioPlaying, plazaRotationMode]);
+    propsRef.current = {
+      fountainOn,
+      fountainStrength,
+      fountainAuxStrength,
+      fountainForceSensorOn,
+      fountainColor,
+      circleColor,
+      audioPlaying,
+      lightingMode,
+      soundReactiveOn,
+      lightsOn,
+      brightness
+    };
+  }, [
+    fountainOn,
+    fountainStrength,
+    fountainAuxStrength,
+    fountainForceSensorOn,
+    fountainColor,
+    circleColor,
+    audioPlaying,
+    lightingMode,
+    soundReactiveOn,
+    lightsOn,
+    brightness
+  ]);
+
+  // Poll ESP32 sound sensor every 100ms when Sound Reactive mode is active
+  const isSoundReactiveMode = soundReactiveOn || lightingMode === 'Sound Reactive';
+  useEffect(() => {
+    if (!isSoundReactiveMode) {
+      soundDataRef.current = { detected: false, level: 0 };
+      return;
+    }
+    let cancelled = false;
+    const poll = async () => {
+      if (cancelled) return;
+      const data = await getSoundLevel();
+      if (!cancelled) soundDataRef.current = data;
+      if (!cancelled) setTimeout(poll, 100);
+    };
+    poll();
+    return () => { cancelled = true; soundDataRef.current = { detected: false, level: 0 }; };
+  }, [isSoundReactiveMode]);
+
+  // Poll ESP32 force sensor every 100ms when Force Sensor Control is active
+  useEffect(() => {
+    if (!fountainForceSensorOn) {
+      forceDataRef.current = { active: false, level: 0, strength: 75 };
+      return;
+    }
+    let cancelled = false;
+    let simPhase = 0;
+    const poll = async () => {
+      if (cancelled) return;
+      const data = await getForceLevel();
+      if (!cancelled) {
+        if (data && data.level !== undefined) {
+          forceDataRef.current = {
+            active: data.active,
+            level: data.level,
+            strength: Math.min(100, Math.round(data.level / 10.23))
+          };
+        } else {
+          // If offline / simulated fallback: smooth natural breathing force
+          simPhase += 0.08;
+          const simStrength = Math.round(55 + Math.sin(simPhase) * 35);
+          forceDataRef.current = {
+            active: true,
+            level: Math.round(simStrength * 10.23),
+            strength: simStrength
+          };
+        }
+      }
+      if (!cancelled) setTimeout(poll, 100);
+    };
+    poll();
+    return () => {
+      cancelled = true;
+      forceDataRef.current = { active: false, level: 0, strength: 75 };
+    };
+  }, [fountainForceSensorOn]);
 
   useEffect(() => {
     const container = mountRef.current;
@@ -339,6 +440,7 @@ export default function DioramaCanvas({
         particle.userData = {
           originX: fp.x,
           originZ: fp.z,
+          isLeft: fp.x < 0,
           vy: 0.035 + Math.random() * 0.03,
           vx: (Math.random() - 0.5) * 0.025,
           vz: (Math.random() - 0.5) * 0.025
@@ -629,16 +731,96 @@ export default function DioramaCanvas({
       // Gentle ambient floating rotation
       dioramaGroup.rotation.y = Math.sin(time * 0.12) * 0.04;
 
-      // Inner circular feature rotation based on plazaRotationMode
-      const { plazaRotationMode: rotMode, audioPlaying: isAudioPlaying } = propsRef.current;
-      if (rotMode === 'On' || (rotMode === 'Sensor' && isAudioPlaying)) {
-        plazaRotationAngle += 0.008;
+      const {
+        lightingMode: lightMode,
+        soundReactiveOn: isSoundReactive,
+        lightsOn: isLightsOn,
+        brightness: bLevel,
+        circleColor: curCircleColor,
+        fountainColor: curFountainColor
+      } = propsRef.current;
+
+      const isSoundActive = (lightMode === 'Sound Reactive' || isSoundReactive);
+
+      // Sound Reactive: lights + inner circle + fountains + water particles change RGB color
+      if (isSoundActive) {
+        const { detected, level } = soundDataRef.current;
+        // In local/simulated preview when offline, generate realistic beat/sound pulse
+        const simBeat = (Math.sin(time * 6) + Math.sin(time * 3.7)) * 0.5 + 0.5;
+        const isDetected = detected || (simBeat > 0.4);
+        const effectiveLevel = detected ? level : (isDetected ? simBeat * 850 : 0);
+
+        if (isDetected) {
+          // Normalize sensor level (0-1023) to 0-1
+          const normalizedLevel = Math.min(1, effectiveLevel / 1023);
+          // Rotation speed: slow at low sound, fast at loud sound
+          plazaRotationAngle += 0.003 + normalizedLevel * 0.032;
+
+          // Sound Reactive RGB rainbow color shift across ALL elements
+          const hue = (time * 0.5 + normalizedLevel * 0.5) % 1;
+          const dynamicRgb = new THREE.Color().setHSL(hue, 0.95, 0.55);
+
+          // 1. Point lights color & dynamic sound pulse
+          if (lightsGroupRef.current && isLightsOn) {
+            const baseIntensity = (bLevel / 100) * 1.3;
+            const soundPulse = 0.8 + normalizedLevel * 0.7;
+            lightsGroupRef.current.children.forEach((l) => {
+              if (l.color) l.color.copy(dynamicRgb);
+              l.intensity = baseIntensity * soundPulse;
+            });
+          }
+
+          // 2. Plaza inner circle RGB color
+          if (plazaMeshRef.current && plazaMeshRef.current.material) {
+            plazaMeshRef.current.material.color.copy(dynamicRgb);
+          }
+
+          // 3. Fountain meshes (pools + STL models) RGB color
+          if (fountainMeshesRef.current) {
+            fountainMeshesRef.current.forEach((m) => {
+              if (m && m.material) m.material.color.copy(dynamicRgb);
+            });
+          }
+
+          // 4. Fountain water spray particles RGB color
+          if (fountainParticlesRef.current) {
+            fountainParticlesRef.current.forEach((p) => {
+              if (p && p.material) p.material.color.copy(dynamicRgb);
+            });
+          }
+        }
+      } else {
+        // When not in sound reactive mode, restore custom / default colors
+        if (lightsGroupRef.current && isLightsOn) {
+          const baseIntensity = (bLevel / 100) * 1.3;
+          const warmColor = new THREE.Color(0xffea9f);
+          lightsGroupRef.current.children.forEach((l) => {
+            if (l.color) l.color.copy(warmColor);
+            l.intensity = baseIntensity;
+          });
+        }
+        if (plazaMeshRef.current && plazaMeshRef.current.material) {
+          plazaMeshRef.current.material.color.set(curCircleColor || '#D4B78C');
+        }
+        if (fountainMeshesRef.current) {
+          fountainMeshesRef.current.forEach((m) => {
+            if (m && m.material) m.material.color.set(curFountainColor || '#77898D');
+          });
+        }
+        if (fountainParticlesRef.current) {
+          fountainParticlesRef.current.forEach((p) => {
+            if (p && p.material) p.material.color.set(curFountainColor || '#77898D');
+          });
+        }
       }
       plazaGroup.rotation.y = plazaRotationAngle;
 
       // Fountain Particle Physics
       if (fountainParticlesRef.current) {
-        const speed = (propsRef.current.fountainStrength / 100) * (propsRef.current.fountainOn ? 1 : 0);
+        const isForceActive = propsRef.current.fountainForceSensorOn;
+        const forceSpeed = (forceDataRef.current.strength / 100);
+        const leftSpeed = (propsRef.current.fountainStrength / 100);
+        const rightSpeed = (propsRef.current.fountainAuxStrength / 100);
 
         fountainParticlesRef.current.forEach((p) => {
           if (!propsRef.current.fountainOn) {
@@ -646,9 +828,10 @@ export default function DioramaCanvas({
             return;
           }
           p.visible = true;
-          p.position.y += p.userData.vy * speed;
-          p.position.x += p.userData.vx * speed;
-          p.position.z += p.userData.vz * speed;
+          const currentSpeed = (isForceActive ? forceSpeed : (p.userData.isLeft ? leftSpeed : rightSpeed));
+          p.position.y += p.userData.vy * currentSpeed;
+          p.position.x += p.userData.vx * currentSpeed;
+          p.position.z += p.userData.vz * currentSpeed;
           p.userData.vy -= 0.0015;
 
           if (p.position.y < 1.0) {
@@ -657,7 +840,7 @@ export default function DioramaCanvas({
               1.4,
               p.userData.originZ + (Math.random() - 0.5) * 0.25
             );
-            p.userData.vy = 0.035 + Math.random() * 0.03;
+            p.userData.vy = (0.035 + Math.random() * 0.03) * Math.max(0.4, currentSpeed);
           }
         });
       }

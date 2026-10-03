@@ -11,7 +11,7 @@ export default function Navigation({ activeTab, setActiveTab, onSettingsClick = 
             <div className="brand-icon-wrapper">
               <Sparkles className="brand-icon" />
             </div>
-            <span className="brand-name">My Diorama</span>
+            <span className="brand-name">Silvestre del Moro Park</span>
           </div>
 
           <nav className="desktop-menu-links">
@@ -76,7 +76,7 @@ export default function Navigation({ activeTab, setActiveTab, onSettingsClick = 
       <header className="mobile-header">
         <div className="mobile-brand" onClick={() => setActiveTab('home')}>
           <Sparkles className="mobile-sparkle" size={20} />
-          <span className="mobile-title">My Diorama</span>
+          <span className="mobile-title">Silvestre del Moro Park</span>
         </div>
         <button className="mobile-settings-btn" onClick={onSettingsClick}>
           <Settings size={20} />

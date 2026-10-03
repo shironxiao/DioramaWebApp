@@ -40,12 +40,14 @@ function App() {
     fountainForceSensorOn: false,
 
     fountainColor: '#77898D',
+    fountainAuxColor: '#3B9DB3',
 
     audioPlaying: false,
     audioTrack: 'No audio selected',
     volume: 70,
 
     circleColor: '#D4B78C',
+    colorSensorTarget: 'All', // 'All', 'F1', 'F2', 'Center'
     rfidGateEnabled: true,
     gateOpen: false,
     plazaRotationMode: 'Sensor'
@@ -59,8 +61,12 @@ function App() {
       if (next.lightsOn !== prev.lightsOn || next.brightness !== prev.brightness) {
         sendLightControl(next.lightsOn, next.brightness);
       }
-      if (next.fountainOn !== prev.fountainOn || next.fountainStrength !== prev.fountainStrength) {
-        sendFountainControl(next.fountainOn, next.fountainStrength);
+      if (
+        next.fountainOn !== prev.fountainOn ||
+        next.fountainStrength !== prev.fountainStrength ||
+        next.fountainAuxStrength !== prev.fountainAuxStrength
+      ) {
+        sendFountainControl(next.fountainOn, next.fountainStrength, next.fountainAuxStrength);
       }
       if (next.fountainColor !== prev.fountainColor) {
         sendColorControl(next.fountainColor);
@@ -80,7 +86,7 @@ function App() {
     localStorage.removeItem('diorama_user');
     setIsLoggedIn(false);
     setUser({ name: '' });
-    showToast('Logged out of My Diorama');
+    showToast('Logged out of Silvestre del Moro Park');
   };
 
   const handleLoginSuccess = (userName) => {

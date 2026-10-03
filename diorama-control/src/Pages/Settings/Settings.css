@@ -207,4 +207,30 @@
   .settings-grid, .system-actions-grid {
     grid-template-columns: 1fr;
   }
+
+  .btn-card-action,
+  .btn-logout,
+  .btn-system-reset {
+    width: 100%;
+    text-align: center;
+    justify-content: center;
+    padding: 12px 20px;
+    font-size: 0.9rem;
+  }
+
+  .source-buttons-row {
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .source-pill-btn {
+    flex: 1 1 auto;
+    text-align: center;
+    min-height: 40px;
+  }
+
+  .sensor-item-row {
+    flex-wrap: wrap;
+    gap: 4px;
+  }
 }

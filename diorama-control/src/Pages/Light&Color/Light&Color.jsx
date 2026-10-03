@@ -1,38 +1,129 @@
 import React, { useState } from 'react';
-import { Lightbulb, Mic, Sun, Palette, Sparkles } from 'lucide-react';
+import {
+  Lightbulb,
+  Mic,
+  Palette,
+  Sparkles,
+  Loader2,
+  Sun,
+  ChevronDown,
+  ChevronUp,
+  Check
+} from 'lucide-react';
 import DioramaCanvas from '../../components/DioramaCanvas';
+import ColorPicker from '../../components/ColorPicker';
 import './Light&Color.css';
+
+const LIGHTING_MODES = [
+  {
+    id: 'Basic',
+    name: 'Basic',
+    desc: 'Simple, steady warm lighting',
+    icon: Lightbulb
+  },
+  {
+    id: 'Colorful',
+    name: 'Colorful',
+    desc: 'A soft vibrant colored glow',
+    icon: Palette
+  },
+  {
+    id: 'Sound Reactive',
+    name: 'Sound Reactive',
+    desc: 'Lights & inner circle react to sound sensor',
+    icon: Mic
+  },
+  {
+    id: 'Color Adaptive',
+    name: 'Color Adaptive',
+    desc: 'Follows ambient light sensor automatically',
+    icon: Sun
+  }
+];
 
 export default function LightAndColor({ appState, setAppState, showToast }) {
   const {
-    lightsOn, brightness, lightingMode, soundReactiveOn, micSensitivity,
-    reactionIntensity, autoDimming, simulatedLight, circleColor, fountainColor, plazaRotationMode
+    lightsOn, brightness, lightingMode, soundReactiveOn,
+    reactionIntensity, circleColor, fountainColor, autoDimming
   } = appState;
+  const isColorAdaptive = lightingMode === 'Color Adaptive';
 
-  // Local state for color RGB inputs
-  const [circleRgb, setCircleRgb] = useState({ r: 212, g: 183, b: 140 });
-  const [fountainRgb, setFountainRgb] = useState({ r: 119, g: 137, b: 141 });
-  const [micActive, setMicActive] = useState(false);
+  const [currentColor, setCurrentColor] = useState(circleColor || '#D4B78C');
+  const [isScanning, setIsScanning] = useState(false);
+  const [isColorsOpen, setIsColorsOpen] = useState(false);
 
-  const hexFromRgb = (r, g, b) => {
-    const toHex = (c) => Math.max(0, Math.min(255, c)).toString(16).padStart(2, '0');
-    return `#${toHex(r)}${toHex(g)}${toHex(b)}`;
+  // Helper for color conversions
+  const hexToRgb = (hex) => {
+    const h = (hex || '#D4B78C').replace('#', '');
+    const n = parseInt(h, 16);
+    return { r: (n >> 16) & 255, g: (n >> 8) & 255, b: n & 255 };
+  };
+  const rgbToHex = (r, g, b) => {
+    const c = v => Math.max(0, Math.min(255, v)).toString(16).padStart(2, '0');
+    return `#${c(r)}${c(g)}${c(b)}`;
   };
 
-  const applyCircleColor = () => {
-    const hex = hexFromRgb(circleRgb.r, circleRgb.g, circleRgb.b);
-    setAppState((prev) => ({ ...prev, circleColor: hex }));
-    showToast(`Applied central circle color: ${hex.toUpperCase()}`);
+  const activeRgb = hexToRgb(currentColor);
+
+  const handlePickerChange = (newRgb) => {
+    setCurrentColor(rgbToHex(newRgb.r, newRgb.g, newRgb.b));
   };
 
-  const applyFountainColor = () => {
-    const hex = hexFromRgb(fountainRgb.r, fountainRgb.g, fountainRgb.b);
-    setAppState((prev) => ({ ...prev, fountainColor: hex }));
-    showToast(`Applied fountain color: ${hex.toUpperCase()}`);
+  // Mode Selection Handler
+  const handleSelectMode = (modeId) => {
+    if (modeId === 'Basic') {
+      setAppState((prev) => ({ ...prev, lightingMode: 'Basic', soundReactiveOn: false, ambientSensorOn: false }));
+    } else if (modeId === 'Colorful') {
+      setAppState((prev) => ({ ...prev, lightingMode: 'Colorful', soundReactiveOn: false, ambientSensorOn: false }));
+    } else if (modeId === 'Sound Reactive') {
+      setAppState((prev) => ({ ...prev, lightingMode: 'Sound Reactive', soundReactiveOn: true, ambientSensorOn: false }));
+      showToast('🎵 Sound Reactive: All RGB lights, fountain & center circle react to sound!');
+    } else if (modeId === 'Color Adaptive') {
+      setAppState((prev) => ({ ...prev, lightingMode: 'Color Adaptive', soundReactiveOn: false, ambientSensorOn: true }));
+      showToast('☀️ Color Adaptive: Ambient light sensor automatically active');
+    }
+  };
+
+  // Scan Color Sensor Handler
+  const handleScanColor = () => {
+    if (isScanning) return;
+    setIsScanning(true);
+    showToast('🔍 TCS3200 Color Sensor scanning target object...');
+
+    setTimeout(() => {
+      const colors = ['#D4B78C', '#4A8C5F', '#3B9DB3', '#E06D53', '#8E67B8', '#E6A14A', '#00A896'];
+      const scannedHex = colors[Math.floor(Math.random() * colors.length)];
+      setCurrentColor(scannedHex);
+      setIsScanning(false);
+      showToast(`✨ Sensor scanned ${scannedHex}! Choose target below to apply.`);
+    }, 1500);
+  };
+
+  // Apply Color to Target Handler: 'all', 'left_fountain', 'right_fountain', 'center'
+  const applyColorToTarget = (target) => {
+    setAppState((prev) => {
+      const next = { ...prev };
+      if (target === 'all') {
+        next.circleColor = currentColor;
+        next.fountainColor = currentColor;
+        next.fountainAuxColor = currentColor;
+        showToast(`✨ Applied ${currentColor.toUpperCase()} to ALL (Center + Left & Right Fountains)!`);
+      } else if (target === 'left_fountain') {
+        next.fountainColor = currentColor;
+        showToast(`✨ Applied ${currentColor.toUpperCase()} to Left Fountain!`);
+      } else if (target === 'right_fountain') {
+        next.fountainAuxColor = currentColor;
+        showToast(`✨ Applied ${currentColor.toUpperCase()} to Right Fountain!`);
+      } else if (target === 'center') {
+        next.circleColor = currentColor;
+        showToast(`✨ Applied ${currentColor.toUpperCase()} to the Center!`);
+      }
+      return next;
+    });
   };
 
   return (
-    <div className="page-container">
+    <div className="page-container compact-for-mobile">
       {/* Header */}
       <div className="page-header-text">
         <div className="section-breadcrumb">CONTROLS / 01</div>
@@ -44,6 +135,8 @@ export default function LightAndColor({ appState, setAppState, showToast }) {
       <DioramaCanvas
         lightsOn={lightsOn}
         brightness={brightness}
+        lightingMode={lightingMode}
+        soundReactiveOn={soundReactiveOn}
         fountainOn={appState.fountainOn}
         fountainStrength={appState.fountainStrength}
         fountainPattern={appState.fountainPattern}
@@ -51,105 +144,51 @@ export default function LightAndColor({ appState, setAppState, showToast }) {
         circleColor={circleColor}
         autoDimming={autoDimming}
         audioPlaying={appState.audioPlaying}
-        plazaRotationMode={plazaRotationMode}
         onGateClick={() => showToast('✨ Diorama Gate Tapped!')}
       />
 
-      {/* SECTION 1: LIGHTING */}
+      {/* SECTION: 4-GRID LIGHTING MODES */}
       <div className="section-block">
-        <h2 className="section-block-title">Lighting</h2>
-        <div className="controls-grid">
-          {/* Master Lighting */}
-          <div className="control-card">
-            <div className="card-header">
-              <div className="card-title-group">
-                <div className="icon-badge amber">
-                  <Lightbulb size={22} />
-                </div>
-                <div className="title-stack">
-                  <h3 className="card-title">Master lighting</h3>
-                  <span className="card-status-subtext">{lightsOn ? 'Lights on' : 'Lights off'}</span>
-                </div>
-              </div>
-              <label className="toggle-switch">
-                <input
-                  type="checkbox"
-                  checked={lightsOn}
-                  onChange={(e) => setAppState((prev) => ({ ...prev, lightsOn: e.target.checked }))}
-                />
-                <span className="slider round amber-toggle"></span>
-              </label>
-            </div>
-          </div>
-
-          {/* Brightness */}
-          <div className="control-card">
-            <div className="card-header">
-              <div className="card-title-group">
-                <div className="icon-badge amber">
-                  <Lightbulb size={22} />
-                </div>
-                <div className="title-stack">
-                  <h3 className="card-title">Brightness</h3>
-                </div>
-              </div>
-              <span className="value-label font-bold">{brightness}%</span>
-            </div>
-            <div className="card-slider-group">
-              <input
-                type="range"
-                min="0"
-                max="100"
-                value={brightness}
-                disabled={!lightsOn}
-                className="custom-range-slider amber-range"
-                onChange={(e) => setAppState((prev) => ({ ...prev, brightness: Number(e.target.value) }))}
-              />
-            </div>
-          </div>
+        <div className="section-header-row">
+          <h2 className="section-block-title">Lighting Modes</h2>
+          <span className="section-sub-badge">{lightingMode}</span>
         </div>
-      </div>
 
-      {/* SECTION 2: LIGHTING MODES */}
-      <div className="section-block">
-        <h2 className="section-block-title">Lighting modes</h2>
         <div className="modes-grid">
-          <div
-            className={`mode-card ${lightingMode === 'Basic' ? 'selected' : ''}`}
-            onClick={() => setAppState((prev) => ({ ...prev, lightingMode: 'Basic' }))}
-          >
-            <h4 className="mode-name">Basic</h4>
-            <p className="mode-desc">Simple, steady lighting</p>
-          </div>
-
-          <div
-            className={`mode-card ${lightingMode === 'Colorful' ? 'selected' : ''}`}
-            onClick={() => setAppState((prev) => ({ ...prev, lightingMode: 'Colorful' }))}
-          >
-            <h4 className="mode-name">Colorful</h4>
-            <p className="mode-desc">A soft colored glow</p>
-          </div>
-
-          <div
-            className={`mode-card ${lightingMode === 'Sound Reactive' ? 'selected' : ''}`}
-            onClick={() => setAppState((prev) => ({ ...prev, lightingMode: 'Sound Reactive' }))}
-          >
-            <h4 className="mode-name">Sound Reactive</h4>
-            <p className="mode-desc">Responds to microphone input</p>
-          </div>
-
-          <div
-            className={`mode-card ${lightingMode === 'Color Adaptive' ? 'selected' : ''}`}
-            onClick={() => setAppState((prev) => ({ ...prev, lightingMode: 'Color Adaptive' }))}
-          >
-            <h4 className="mode-name">Color Adaptive</h4>
-            <p className="mode-desc">Follows color & ambient sensors</p>
-          </div>
+          {LIGHTING_MODES.map((mode) => {
+            const IconComponent = mode.icon;
+            const isSelected = lightingMode === mode.id;
+            return (
+              <div
+                key={mode.id}
+                className={`mode-card ${isSelected ? 'selected' : ''}`}
+                onClick={() => handleSelectMode(mode.id)}
+                role="button"
+                tabIndex={0}
+              >
+                <div className="mode-card-header">
+                  <div className={`icon-badge ${isSelected ? 'amber-active' : 'amber'}`}>
+                    <IconComponent size={20} />
+                  </div>
+                  {isSelected && (
+                    <div className="mode-active-pill">
+                      <Check size={14} />
+                      <span>Active</span>
+                    </div>
+                  )}
+                </div>
+                <div className="mode-card-body">
+                  <h4 className="mode-name">{mode.name}</h4>
+                  <p className="mode-desc">{mode.desc}</p>
+                </div>
+              </div>
+            );
+          })}
         </div>
 
-        {/* Sub Controls: Sound Reactive & Ambient Light */}
-        <div className="controls-grid mt-4">
-          <div className="control-card">
+        {/* Sound Reactive Sub-Control (when Sound Reactive is active) */}
+        {lightingMode === 'Sound Reactive' && (
+          <div className="control-card mt-2">
             <div className="card-header">
               <div className="card-title-group">
                 <div className="icon-badge amber">
@@ -157,35 +196,23 @@ export default function LightAndColor({ appState, setAppState, showToast }) {
                 </div>
                 <div className="title-stack">
                   <h3 className="card-title">Sound-reactive lighting</h3>
-                  <span className="card-status-subtext">{soundReactiveOn ? 'On' : 'Off'}</span>
+                  <span className="card-status-subtext">{soundReactiveOn ? 'Active — all RGB elements shift with sound' : 'Off'}</span>
                 </div>
               </div>
               <label className="toggle-switch">
                 <input
                   type="checkbox"
                   checked={soundReactiveOn}
-                  onChange={(e) => setAppState((prev) => ({ ...prev, soundReactiveOn: e.target.checked }))}
+                  onChange={(e) => {
+                    setAppState((prev) => ({ ...prev, soundReactiveOn: e.target.checked }));
+                  }}
                 />
                 <span className="slider round amber-toggle"></span>
               </label>
             </div>
-
             <div className="card-slider-group gap-3">
               <div className="slider-label-row">
-                <span>Microphone sensitivity</span>
-                <span className="value-label">{micSensitivity}%</span>
-              </div>
-              <input
-                type="range"
-                min="0"
-                max="100"
-                value={micSensitivity}
-                className="custom-range-slider amber-range"
-                onChange={(e) => setAppState((prev) => ({ ...prev, micSensitivity: Number(e.target.value) }))}
-              />
-
-              <div className="slider-label-row">
-                <span>Light reaction intensity</span>
+                <span>Reaction intensity</span>
                 <span className="value-label">{reactionIntensity}%</span>
               </div>
               <input
@@ -198,290 +225,129 @@ export default function LightAndColor({ appState, setAppState, showToast }) {
               />
             </div>
           </div>
+        )}
 
-          {/* Ambient light control */}
-          <div className="control-card">
+        {/* Color Adaptive: Ambient Sensor Status Banner */}
+        {isColorAdaptive && (
+          <div className="control-card mt-2 ambient-status-card">
             <div className="card-header">
               <div className="card-title-group">
                 <div className="icon-badge amber">
                   <Sun size={20} />
                 </div>
                 <div className="title-stack">
-                  <h3 className="card-title">Ambient light control</h3>
+                  <h3 className="card-title">Ambient Light Sensor</h3>
+                  <span className="card-status-subtext" style={{ color: '#4ade80' }}>● Active — auto-adjusting brightness</span>
                 </div>
               </div>
+              <span className="sensor-scanning-pill" style={{ background: 'rgba(74,222,128,0.15)', color: '#4ade80', border: '1px solid rgba(74,222,128,0.3)' }}>
+                <span className="scanning-dot" style={{ background: '#4ade80' }}></span> Sensor ON
+              </span>
             </div>
-
-            <div className="card-footer-row border-none pt-0">
-              <span>Auto dimming</span>
-              <label className="toggle-switch">
-                <input
-                  type="checkbox"
-                  checked={autoDimming}
-                  onChange={(e) => setAppState((prev) => ({ ...prev, autoDimming: e.target.checked }))}
-                />
-                <span className="slider round amber-toggle"></span>
-              </label>
-            </div>
-
-            <div className="card-slider-group">
-              <div className="slider-label-row">
-                <span>Simulated room light</span>
-                <span className="value-label">{simulatedLight}%</span>
-              </div>
-              <input
-                type="range"
-                min="0"
-                max="100"
-                value={simulatedLight}
-                className="custom-range-slider amber-range"
-                onChange={(e) => setAppState((prev) => ({ ...prev, simulatedLight: Number(e.target.value) }))}
-              />
-              <div className="range-sub-labels">
-                <span>Bright</span>
-                <span>Dark</span>
-              </div>
-            </div>
+            <p className="card-description-subtext mt-1">
+              Following room brightness automatically via ambient sensor. No manual control needed.
+            </p>
           </div>
-        </div>
+        )}
       </div>
 
-      {/* SECTION 2.5: INNER CIRCLE ROTATION */}
+      {/* SECTION 3: COLORS DROPDOWN (COLLAPSIBLE CARD) */}
       <div className="section-block">
-        <h2 className="section-block-title">Inner circle rotation</h2>
-        <div className="control-card">
-          <div className="card-header">
+        <div className={`control-card color-collapsible-card ${isScanning ? 'card-scanning' : ''} ${isColorsOpen ? 'expanded' : 'collapsed'}`}>
+          <div
+            className="card-header color-accordion-header"
+            onClick={() => setIsColorsOpen(!isColorsOpen)}
+          >
             <div className="card-title-group">
               <div className="icon-badge amber">
-                <Sparkles size={20} />
+                <Palette size={22} />
               </div>
               <div className="title-stack">
-                <h3 className="card-title">Rotation mode</h3>
+                <div className="title-with-swatch">
+                  <h3 className="card-title">Color Control & Detection</h3>
+                  <span
+                    className="color-mini-swatch"
+                    style={{ backgroundColor: currentColor }}
+                    title={currentColor}
+                  />
+                  <span className="hex-mini-tag">{(currentColor || '').toUpperCase()}</span>
+                </div>
                 <span className="card-status-subtext">
-                  {plazaRotationMode === 'On' ? 'Always spinning' : plazaRotationMode === 'Off' ? 'Stopped' : 'Reacts to mic sensor'}
+                  {isColorsOpen ? (isScanning ? 'TCS3200 scanning...' : 'Pick a color or scan with sensor') : 'Tap dropdown to open color tools'}
                 </span>
               </div>
             </div>
-          </div>
-          <div className="source-buttons-row">
-            {['On', 'Off', 'Sensor'].map((mode) => (
-              <button
-                key={mode}
-                className={`source-pill-btn ${plazaRotationMode === mode ? 'active' : ''}`}
-                onClick={() => {
-                  setAppState((prev) => ({ ...prev, plazaRotationMode: mode }));
-                  showToast(`Inner circle rotation: ${mode === 'Sensor' ? 'Mic sensor' : mode}`);
-                }}
-              >
-                {mode === 'Sensor' ? 'Mic Sensor' : mode}
-              </button>
-            ))}
-          </div>
-          <p className="card-description-subtext mt-2">
-            <strong>On</strong> — always rotates. <strong>Off</strong> — fully stopped. <strong>Mic Sensor</strong> — rotates only when sound is detected.
-          </p>
-        </div>
-      </div>
 
-      {/* SECTION 3: COLORS */}
-      <div className="section-block">
-        <h2 className="section-block-title">Colors</h2>
-        <div className="colors-grid">
-          {/* Central Circle Color */}
-          <div className="control-card">
-            <div className="card-header">
-              <div className="card-title-group">
-                <div className="icon-badge amber">
-                  <Palette size={20} />
-                </div>
-                <h3 className="card-title">Central circle</h3>
+            <div className="header-right-action">
+              <div className={`dropdown-toggle-pill ${isColorsOpen ? 'active' : ''}`}>
+                <span>{isColorsOpen ? 'Close' : 'Choose'}</span>
+                {isColorsOpen ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
               </div>
-            </div>
-
-            <div className="color-picker-flex">
-              <div
-                className="color-swatch-box"
-                style={{ backgroundColor: hexFromRgb(circleRgb.r, circleRgb.g, circleRgb.b) }}
-              ></div>
-              <div className="rgb-inputs-group">
-                <span className="rgb-label-title">RGB values</span>
-                <div className="rgb-fields-row">
-                  <div className="field">
-                    <span>R</span>
-                    <input
-                      type="number"
-                      value={circleRgb.r}
-                      onChange={(e) => setCircleRgb({ ...circleRgb, r: Number(e.target.value) })}
-                    />
-                  </div>
-                  <div className="field">
-                    <span>G</span>
-                    <input
-                      type="number"
-                      value={circleRgb.g}
-                      onChange={(e) => setCircleRgb({ ...circleRgb, g: Number(e.target.value) })}
-                    />
-                  </div>
-                  <div className="field">
-                    <span>B</span>
-                    <input
-                      type="number"
-                      value={circleRgb.b}
-                      onChange={(e) => setCircleRgb({ ...circleRgb, b: Number(e.target.value) })}
-                    />
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <div className="color-card-footer">
-              <span className="hex-display">{hexFromRgb(circleRgb.r, circleRgb.g, circleRgb.b).toUpperCase()}</span>
-              <button className="btn-amber" onClick={applyCircleColor}>Apply color</button>
             </div>
           </div>
 
-          {/* Fountain Color */}
-          <div className="control-card">
-            <div className="card-header">
-              <div className="card-title-group">
-                <div className="icon-badge amber">
-                  <Palette size={20} />
-                </div>
-                <h3 className="card-title">Fountain</h3>
-              </div>
-            </div>
+          {/* Collapsible Content */}
+          {isColorsOpen && (
+            <div className="color-collapsible-body">
+              {/* Color Picker */}
+              <ColorPicker rgb={activeRgb} onChange={handlePickerChange} />
 
-            <div className="color-picker-flex">
-              <div
-                className="color-swatch-box"
-                style={{ backgroundColor: hexFromRgb(fountainRgb.r, fountainRgb.g, fountainRgb.b) }}
-              ></div>
-              <div className="rgb-inputs-group">
-                <span className="rgb-label-title">RGB values</span>
-                <div className="rgb-fields-row">
-                  <div className="field">
-                    <span>R</span>
-                    <input
-                      type="number"
-                      value={fountainRgb.r}
-                      onChange={(e) => setFountainRgb({ ...fountainRgb, r: Number(e.target.value) })}
-                    />
-                  </div>
-                  <div className="field">
-                    <span>G</span>
-                    <input
-                      type="number"
-                      value={fountainRgb.g}
-                      onChange={(e) => setFountainRgb({ ...fountainRgb, g: Number(e.target.value) })}
-                    />
-                  </div>
-                  <div className="field">
-                    <span>B</span>
-                    <input
-                      type="number"
-                      value={fountainRgb.b}
-                      onChange={(e) => setFountainRgb({ ...fountainRgb, b: Number(e.target.value) })}
-                    />
-                  </div>
+              {/* Hex Display & Scan Color Button */}
+              <div className="color-card-footer" style={{ marginTop: 14 }}>
+                <div className="hex-display-group">
+                  <span className="hex-label">HEX: </span>
+                  <span className="hex-display">{(currentColor || '').toUpperCase()}</span>
                 </div>
-              </div>
-            </div>
 
-            <div className="color-card-footer">
-              <span className="hex-display">{hexFromRgb(fountainRgb.r, fountainRgb.g, fountainRgb.b).toUpperCase()}</span>
-              <button className="btn-amber" onClick={applyFountainColor}>Apply color</button>
-            </div>
-          </div>
-
-          {/* Color Sensor */}
-          <div className="control-card col-span-full">
-            <div className="card-header">
-              <div className="card-title-group">
-                <div className="icon-badge amber">
-                  <Sparkles size={20} />
-                </div>
-                <div className="title-stack">
-                  <h3 className="card-title">Color sensor</h3>
-                  <span className="card-status-subtext">Demo sample - No color sensor linked</span>
-                </div>
-              </div>
-            </div>
-
-            <div className="sensor-content-row">
-              <div className="detected-color-info">
-                <div className="color-swatch-box small" style={{ backgroundColor: '#D4B78C' }}></div>
-                <div className="detected-text">
-                  <span className="text-sm font-semibold">Detected color</span>
-                  <span className="text-xs text-muted">#D4B78C - RGB 212, 183, 140</span>
-                </div>
-              </div>
-              <div className="sensor-actions-col flex flex-col gap-2">
                 <button
-                  className="btn-amber"
-                  onClick={() => {
-                    setAppState((prev) => ({ ...prev, circleColor: '#D4B78C' }));
-                    showToast('Applied detected sensor color #D4B78C to Circle');
+                  className={`btn-amber-sensor ${isScanning ? 'is-scanning' : ''}`}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleScanColor();
                   }}
+                  disabled={isScanning}
+                  title="Detect color with TCS3200 sensor"
                 >
-                  Apply to Circle
-                </button>
-                <button
-                  className="btn-amber"
-                  onClick={() => {
-                    setAppState((prev) => ({ ...prev, fountainColor: '#D4B78C' }));
-                    showToast('Applied detected sensor color #D4B78C to Fountain');
-                  }}
-                >
-                  Apply to Fountain
+                  {isScanning ? (
+                    <>
+                      <Loader2 size={16} className="spin-icon" />
+                      <span>Scanning Color...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Sparkles size={16} />
+                      <span>Scan Color Sensor</span>
+                    </>
+                  )}
                 </button>
               </div>
+
+              {/* Apply Color Target Buttons: ALL, Left fountain, Right fountain, The Center */}
+              <div className="apply-targets-section">
+                <span className="apply-targets-header">APPLY COLOR TO:</span>
+                <div className="apply-targets-grid">
+                  <button className="btn-target-apply" onClick={() => applyColorToTarget('all')}>
+                    <span className="target-title">ALL</span>
+                  </button>
+
+                  <button className="btn-target-apply" onClick={() => applyColorToTarget('left_fountain')}>
+                    <span className="target-title">Left Fountain</span>
+                  </button>
+
+                  <button className="btn-target-apply" onClick={() => applyColorToTarget('right_fountain')}>
+                    <span className="target-title">Right Fountain</span>
+                  </button>
+
+                  <button className="btn-target-apply" onClick={() => applyColorToTarget('center')}>
+                    <span className="target-title">The Center</span>
+                  </button>
+                </div>
+              </div>
             </div>
-          </div>
+          )}
         </div>
       </div>
 
-      {/* SECTION 4: MICROPHONE */}
-      <div className="section-block">
-        <h2 className="section-block-title">Microphone</h2>
-        <div className="control-card">
-          <div className="card-header">
-            <div className="card-title-group">
-              <div className="icon-badge amber">
-                <Mic size={20} />
-              </div>
-              <div className="title-stack">
-                <h3 className="card-title">Microphone</h3>
-                <span className="card-status-subtext">{micActive ? 'Microphone active' : 'Microphone off'}</span>
-              </div>
-            </div>
-            <button
-              className="btn-outline"
-              onClick={() => {
-                const next = !micActive;
-                setMicActive(next);
-                showToast(next ? 'Microphone Enabled' : 'Microphone Disabled');
-              }}
-            >
-              {micActive ? 'Disable microphone' : 'Enable microphone'}
-            </button>
-          </div>
-
-          <div className="sound-level-meter-wrapper">
-            <div className="sound-level-labels">
-              <span>Sound level</span>
-              <span>{micActive ? '42%' : '0%'}</span>
-            </div>
-            <div className="level-bar-background">
-              <div className="level-bar-fill" style={{ width: micActive ? '42%' : '0%' }}></div>
-            </div>
-            <div className="dots-meter-row">
-              {Array.from({ length: 26 }).map((_, i) => (
-                <span key={i} className={`meter-dot ${micActive && i < 11 ? 'active' : ''}`}></span>
-              ))}
-            </div>
-          </div>
-        </div>
-      </div>
     </div>
   );
 }

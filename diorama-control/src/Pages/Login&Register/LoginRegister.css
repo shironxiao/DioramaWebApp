@@ -228,8 +228,49 @@
   text-decoration: underline;
 }
 
+/* ── Mobile ── */
+@media (max-width: 768px) {
+  .login-page-wrapper {
+    padding: 24px 16px;
+    align-items: flex-start;
+    padding-top: 48px;
+  }
+
+  .login-card-box {
+    padding: 24px 20px;
+    border-radius: 22px;
+  }
+
+  .login-brand-title {
+    font-size: 1.5rem;
+  }
+
+  .login-brand-subtitle {
+    font-size: 0.92rem;
+  }
+}
+
 @media (max-width: 480px) {
   .name-inputs-row {
     grid-template-columns: 1fr;
+  }
+
+  .login-page-wrapper {
+    padding: 20px 12px;
+    padding-top: 36px;
+  }
+
+  .login-card-box {
+    padding: 20px 16px;
+    border-radius: 18px;
+  }
+
+  .login-brand-title {
+    font-size: 1.3rem;
+  }
+
+  .btn-sage-submit {
+    padding: 13px;
+    font-size: 0.95rem;
   }
 }

@@ -48,10 +48,11 @@ export const sendLightControl = (isOn, brightness = 75) => {
   });
 };
 
-export const sendFountainControl = (isOn, strength = 100, pattern = 'Pulsing') => {
+export const sendFountainControl = (isOn, leftStrength = 100, rightStrength = 75, pattern = 'Pulsing') => {
   return sendEspCommand('/api/fountain', {
     state: isOn ? 'on' : 'off',
-    strength: strength,
+    strength: leftStrength,
+    auxStrength: rightStrength,
     pattern: pattern
   });
 };
@@ -64,4 +65,45 @@ export const sendColorControl = (hexColor) => {
   const b = parseInt(cleanHex.substring(4, 6), 16) || 0;
 
   return sendEspCommand('/api/color', { r, g, b });
+};
+
+// Read sound sensor from ESP32: returns { detected: bool, level: 0-1023 }
+export const getSoundLevel = async () => {
+  const isSelfHosted = window.location.hostname === esp32Ip || (window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1');
+  const url = isSelfHosted ? '/api/sound' : `http://${esp32Ip}/api/sound`;
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 2000);
+    const response = await fetch(url, { signal: controller.signal, mode: 'cors' });
+    clearTimeout(timeoutId);
+    if (!response.ok) return { detected: false, level: 0 };
+    const data = await response.json();
+    // Expect ESP32 to return: { "detected": true/false, "level": 0-1023 }
+    return {
+      detected: !!data.detected,
+      level: Math.min(1023, Math.max(0, Number(data.level) || 0))
+    };
+  } catch {
+    return { detected: false, level: 0 };
+  }
+};
+
+// Read force sensor from ESP32: returns { active: bool, level: 0-1023 }
+export const getForceLevel = async () => {
+  const isSelfHosted = window.location.hostname === esp32Ip || (window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1');
+  const url = isSelfHosted ? '/api/force' : `http://${esp32Ip}/api/force`;
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 2000);
+    const response = await fetch(url, { signal: controller.signal, mode: 'cors' });
+    clearTimeout(timeoutId);
+    if (!response.ok) return null;
+    const data = await response.json();
+    return {
+      active: !!data.active,
+      level: Math.min(1023, Math.max(0, Number(data.level ?? data.force) || 0))
+    };
+  } catch {
+    return null;
+  }
 };
