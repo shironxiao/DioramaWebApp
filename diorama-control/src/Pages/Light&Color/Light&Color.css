@@ -28,31 +28,28 @@
   color: #3b332b;
 }
 
-/* Lighting Modes 4-Grid */
+/* Lighting Modes 2x2 Grid (Always 2 Columns on Desktop & Android) */
 .modes-grid {
   display: grid;
   grid-template-columns: repeat(2, 1fr);
   gap: 12px;
-}
-
-@media (max-width: 540px) {
-  .modes-grid {
-    grid-template-columns: 1fr;
-  }
+  width: 100%;
 }
 
 .mode-card {
   background: #ffffff;
-  border-radius: 20px;
-  padding: 16px 18px;
+  border-radius: 18px;
+  padding: 14px 16px;
   border: 1.5px solid #ebdcd0;
   cursor: pointer;
   transition: all 0.22s cubic-bezier(0.4, 0, 0.2, 1);
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  justify-content: space-between;
+  gap: 8px;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.02);
   user-select: none;
+  min-width: 0;
 }
 
 .mode-card:hover {
@@ -71,6 +68,7 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 6px;
 }
 
 .icon-badge.amber-active {
@@ -81,38 +79,75 @@
 .mode-active-pill {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  font-size: 0.72rem;
+  gap: 3px;
+  font-size: 0.68rem;
   font-weight: 700;
   color: #d9884e;
   background: #faede2;
-  padding: 3px 8px;
+  padding: 2px 7px;
   border-radius: 999px;
   border: 1px solid rgba(217, 136, 78, 0.25);
+  flex-shrink: 0;
 }
 
 .mode-card-body {
   display: flex;
   flex-direction: column;
-  gap: 3px;
+  gap: 2px;
+  min-width: 0;
 }
 
 .mode-name {
-  font-size: 1rem;
+  font-size: 0.95rem;
   font-weight: 700;
   color: #2d261e;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .mode-desc {
-  font-size: 0.8rem;
+  font-size: 0.74rem;
   color: #8c7e72;
-  line-height: 1.35;
+  line-height: 1.3;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
 
 /* Badges & Ranges */
 .icon-badge.amber {
   background-color: #faede2;
   color: #d9884e;
+}
+
+/* Mobile & Android specific optimizations for 2x2 grid */
+@media (max-width: 600px) {
+  .modes-grid {
+    grid-template-columns: repeat(2, 1fr) !important;
+    gap: 8px;
+  }
+
+  .mode-card {
+    padding: 10px 12px;
+    border-radius: 14px;
+    gap: 6px;
+  }
+
+  .mode-card .icon-badge {
+    width: 32px;
+    height: 32px;
+  }
+
+  .mode-name {
+    font-size: 0.88rem;
+  }
+
+  .mode-desc {
+    font-size: 0.7rem;
+    line-height: 1.25;
+  }
 }
 
 .slider.amber-toggle {

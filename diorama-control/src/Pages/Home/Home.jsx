@@ -176,17 +176,15 @@ export default function Home({ appState, setAppState, setActiveTab, showToast })
           <div className="card-header">
             <div className="card-title-group">
               <div className={`icon-badge ${gateOpen ? 'gate-icon-open' : 'gate-icon-closed'}`}>
-                {gateOpen ? <Unlock size={22} /> : <Lock size={22} />}
+                {gateOpen ? <Unlock size={20} /> : <Lock size={20} />}
               </div>
               <div className="title-stack">
                 <h3 className="card-title">Gate Access</h3>
-                <span className="card-status-subtext">
-                  {isScanning ? 'Scanning fingerprint...' : gateOpen ? '● Open' : '● Closed'}
-                </span>
+                <div className={`gate-inline-pill ${gateOpen ? 'open' : 'closed'}`}>
+                  <span className="pill-dot"></span>
+                  <span>{isScanning ? 'Scanning...' : gateOpen ? 'Gate: OPEN' : 'Gate: CLOSED'}</span>
+                </div>
               </div>
-            </div>
-            <div className={`gate-status-badge ${gateOpen ? 'open' : 'closed'}`}>
-              {gateOpen ? 'OPEN' : 'LOCKED'}
             </div>
           </div>
 
@@ -200,13 +198,13 @@ export default function Home({ appState, setAppState, setActiveTab, showToast })
           >
             <div className="biometric-inner">
               <Fingerprint
-                size={40}
+                size={30}
                 className={`fingerprint-icon ${isScanning ? 'fp-scanning' : ''}`}
-                strokeWidth={1.5}
+                strokeWidth={1.75}
               />
               <span className="biometric-label">
                 {isScanning
-                  ? 'Scanning...'
+                  ? 'Verifying...'
                   : gateOpen
                   ? 'Tap to Close Gate'
                   : 'Tap to Open Gate'}

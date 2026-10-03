@@ -725,66 +725,139 @@ input:checked + .slider:before {
     font-size: 0.92rem;
   }
 
-  /* ── Grids → single column ── */
+  /* ── Grids → 2x2 Grid on Mobile / Android ── */
   .controls-grid {
-    grid-template-columns: 1fr;
-    gap: 12px;
+    grid-template-columns: repeat(2, 1fr) !important;
+    gap: 8px;
   }
 
   /* ── 3D Canvas ── */
   .canvas-wrapper {
-    height: 260px;
+    height: 240px;
   }
 
   /* ── Control Cards ── */
   .control-card {
-    padding: 16px;
-    border-radius: 18px;
-    gap: 14px;
+    padding: 12px 10px;
+    border-radius: 16px;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    gap: 8px;
+    min-width: 0;
+  }
+
+  .card-header {
+    gap: 4px;
+  }
+
+  .card-title-group {
+    gap: 6px;
+    min-width: 0;
+    flex: 1;
   }
 
   .card-title {
-    font-size: 1rem;
+    font-size: 0.88rem;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .card-status-subtext {
+    font-size: 0.68rem;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 
   .icon-badge {
-    width: 38px;
-    height: 38px;
-    border-radius: 11px;
+    width: 32px;
+    height: 32px;
+    min-width: 32px;
+    border-radius: 10px;
   }
 
-  /* ── Touch targets — min 44px ── */
+  .icon-badge svg {
+    width: 17px;
+    height: 17px;
+  }
+
+  /* ── Touch targets ── */
   .toggle-switch {
-    width: 50px;
-    height: 30px;
+    width: 42px;
+    height: 24px;
     flex-shrink: 0;
   }
 
   .slider:before {
-    height: 24px;
-    width: 24px;
+    height: 18px;
+    width: 18px;
+    bottom: 3px;
+    left: 3px;
   }
 
   input:checked + .slider:before {
-    transform: translateX(20px);
+    transform: translateX(18px);
   }
 
-  .audio-play-circle-btn,
+  .audio-play-circle-btn {
+    width: 32px;
+    height: 32px;
+    min-width: 32px;
+  }
+
   .mobile-settings-btn,
   .icon-button {
-    width: 44px;
-    height: 44px;
-    min-width: 44px;
+    width: 40px;
+    height: 40px;
+    min-width: 40px;
   }
 
   /* ── Range sliders ── */
+  .card-slider-group {
+    gap: 4px;
+  }
+
+  .slider-label-row {
+    font-size: 0.72rem;
+  }
+
+  .value-label {
+    font-size: 0.72rem;
+  }
+
   .custom-range-slider {
-    height: 8px;
+    height: 6px;
   }
 
   .custom-range-slider::-webkit-slider-thumb {
-    width: 22px;
-    height: 22px;
+    width: 18px;
+    height: 18px;
+  }
+
+  /* ── Biometric Gate Card inside 2x2 grid ── */
+  .biometric-scan-btn {
+    padding: 8px 6px;
+    border-radius: 12px;
+  }
+
+  .biometric-inner {
+    gap: 4px;
+  }
+
+  .fingerprint-icon {
+    width: 26px;
+    height: 26px;
+  }
+
+  .biometric-label {
+    font-size: 0.68rem;
+  }
+
+  .gate-status-badge {
+    font-size: 0.58rem;
+    padding: 2px 6px;
   }
 
   /* ── Toast ── */
@@ -815,34 +888,38 @@ input:checked + .slider:before {
 /* ── Small phones (≤ 390px) ── */
 @media (max-width: 390px) {
   .main-viewport {
-    padding: 12px 10px;
+    padding: 10px 8px;
   }
 
   .page-main-title {
-    font-size: 1.4rem;
+    font-size: 1.35rem;
   }
 
   .canvas-wrapper {
-    height: 220px;
+    height: 200px;
+  }
+
+  .controls-grid {
+    gap: 6px;
+  }
+
+  .control-card {
+    padding: 10px 8px;
+    border-radius: 14px;
   }
 
   .mobile-title {
-    font-size: 0.88rem;
-    max-width: 160px;
+    font-size: 0.85rem;
+    max-width: 150px;
   }
 
   .pill-nav-item {
-    padding: 5px 8px;
-    font-size: 0.6rem;
+    padding: 5px 6px;
+    font-size: 0.58rem;
   }
 
   .pill-nav-item span {
     display: none;
-  }
-
-  .control-card {
-    padding: 14px;
-    border-radius: 16px;
   }
 }
 
@@ -864,25 +941,45 @@ input:checked + .slider:before {
   box-shadow: 0 0 20px rgba(86, 150, 112, 0.18) !important;
 }
 
-/* Gate status badge */
-.gate-status-badge {
-  font-size: 0.68rem;
-  font-weight: 800;
-  letter-spacing: 0.1em;
-  padding: 4px 12px;
+/* Gate inline status pill */
+.gate-inline-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 0.7rem;
+  font-weight: 700;
+  padding: 2px 8px;
   border-radius: 999px;
+  width: fit-content;
+  margin-top: 1px;
 }
 
-.gate-status-badge.open {
-  background: rgba(74, 222, 128, 0.15);
-  color: #22c55e;
-  border: 1px solid rgba(74, 222, 128, 0.35);
+.gate-inline-pill .pill-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
 }
 
-.gate-status-badge.closed {
-  background: rgba(239, 68, 68, 0.1);
-  color: #ef4444;
-  border: 1px solid rgba(239, 68, 68, 0.25);
+.gate-inline-pill.open {
+  background: rgba(34, 197, 94, 0.15);
+  color: #16a34a;
+  border: 1px solid rgba(34, 197, 94, 0.35);
+}
+
+.gate-inline-pill.open .pill-dot {
+  background: #16a34a;
+  box-shadow: 0 0 6px rgba(22, 163, 74, 0.6);
+}
+
+.gate-inline-pill.closed {
+  background: rgba(239, 68, 68, 0.12);
+  color: #dc2626;
+  border: 1px solid rgba(239, 68, 68, 0.3);
+}
+
+.gate-inline-pill.closed .pill-dot {
+  background: #dc2626;
 }
 
 /* Icon badges for gate */
