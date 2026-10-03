@@ -50,8 +50,12 @@ export default function Home({ appState, setAppState, setActiveTab, showToast })
       <DioramaCanvas
         lightsOn={lightsOn}
         brightness={brightness}
+        lightingMode={lightingMode}
+        soundReactiveOn={appState.soundReactiveOn}
         fountainOn={fountainOn}
         fountainStrength={fountainStrength}
+        fountainAuxStrength={appState.fountainAuxStrength}
+        fountainForceSensorOn={appState.fountainForceSensorOn}
         fountainColor={fountainColor}
         circleColor={circleColor}
         autoDimming={autoDimming}

@@ -24,7 +24,7 @@ const LIGHTING_MODES = [
   {
     id: 'Colorful',
     name: 'Colorful',
-    desc: 'A soft vibrant colored glow',
+    desc: 'Pick & apply custom colors to each RGB element',
     icon: Palette
   },
   {
@@ -44,7 +44,7 @@ const LIGHTING_MODES = [
 export default function LightAndColor({ appState, setAppState, showToast }) {
   const {
     lightsOn, brightness, lightingMode, soundReactiveOn,
-    reactionIntensity, circleColor, fountainColor, autoDimming
+    reactionIntensity, circleColor, fountainColor, fountainAuxColor, autoDimming
   } = appState;
   const isColorAdaptive = lightingMode === 'Color Adaptive';
 
@@ -72,9 +72,18 @@ export default function LightAndColor({ appState, setAppState, showToast }) {
   // Mode Selection Handler
   const handleSelectMode = (modeId) => {
     if (modeId === 'Basic') {
-      setAppState((prev) => ({ ...prev, lightingMode: 'Basic', soundReactiveOn: false, ambientSensorOn: false }));
+      setAppState((prev) => ({
+        ...prev,
+        lightingMode: 'Basic',
+        soundReactiveOn: false,
+        ambientSensorOn: false,
+        circleColor: '#D4B78C',
+        fountainColor: '#77898D',
+        fountainAuxColor: '#3B9DB3'
+      }));
     } else if (modeId === 'Colorful') {
       setAppState((prev) => ({ ...prev, lightingMode: 'Colorful', soundReactiveOn: false, ambientSensorOn: false }));
+      setIsColorsOpen(false);
     } else if (modeId === 'Sound Reactive') {
       setAppState((prev) => ({ ...prev, lightingMode: 'Sound Reactive', soundReactiveOn: true, ambientSensorOn: false }));
       showToast('🎵 Sound Reactive: All RGB lights, fountain & center circle react to sound!');
@@ -139,8 +148,11 @@ export default function LightAndColor({ appState, setAppState, showToast }) {
         soundReactiveOn={soundReactiveOn}
         fountainOn={appState.fountainOn}
         fountainStrength={appState.fountainStrength}
+        fountainAuxStrength={appState.fountainAuxStrength}
+        fountainForceSensorOn={appState.fountainForceSensorOn}
         fountainPattern={appState.fountainPattern}
         fountainColor={fountainColor}
+        fountainAuxColor={appState.fountainAuxColor}
         circleColor={circleColor}
         autoDimming={autoDimming}
         audioPlaying={appState.audioPlaying}
@@ -227,6 +239,85 @@ export default function LightAndColor({ appState, setAppState, showToast }) {
           </div>
         )}
 
+        {/* Colorful Mode: Color Control & Detection Sub-Card */}
+        {lightingMode === 'Colorful' && (
+          <div className={`control-card mt-2 ${isScanning ? 'card-scanning' : ''} ${isColorsOpen ? 'expanded' : 'collapsed'} color-collapsible-card`}>
+            <div
+              className="card-header color-accordion-header"
+              onClick={() => setIsColorsOpen(!isColorsOpen)}
+            >
+              <div className="card-title-group">
+                <div className="icon-badge amber">
+                  <Palette size={20} />
+                </div>
+                <div className="title-stack">
+                  <div className="title-with-swatch">
+                    <h3 className="card-title">Color Control & Detection</h3>
+                    <span
+                      className="color-mini-swatch"
+                      style={{ backgroundColor: currentColor }}
+                      title={currentColor}
+                    />
+                    <span className="hex-mini-tag">{(currentColor || '').toUpperCase()}</span>
+                  </div>
+                  <span className="card-status-subtext">
+                    {isColorsOpen ? (isScanning ? 'TCS3200 scanning...' : 'Pick a color or scan with sensor') : 'Tap to open color tools'}
+                  </span>
+                </div>
+              </div>
+              <div className="header-right-action">
+                <div className={`dropdown-toggle-pill ${isColorsOpen ? 'active' : ''}`}>
+                  <span>{isColorsOpen ? 'Close' : 'Choose'}</span>
+                  {isColorsOpen ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+                </div>
+              </div>
+            </div>
+
+            {isColorsOpen && (
+              <div className="color-collapsible-body">
+                <ColorPicker rgb={activeRgb} onChange={handlePickerChange} />
+
+                <div className="color-card-footer" style={{ marginTop: 14 }}>
+                  <div className="hex-display-group">
+                    <span className="hex-label">HEX: </span>
+                    <span className="hex-display">{(currentColor || '').toUpperCase()}</span>
+                  </div>
+                  <button
+                    className={`btn-amber-sensor ${isScanning ? 'is-scanning' : ''}`}
+                    onClick={(e) => { e.stopPropagation(); handleScanColor(); }}
+                    disabled={isScanning}
+                    title="Detect color with TCS3200 sensor"
+                  >
+                    {isScanning ? (
+                      <><Loader2 size={16} className="spin-icon" /><span>Scanning Color...</span></>
+                    ) : (
+                      <><Sparkles size={16} /><span>Scan Color Sensor</span></>
+                    )}
+                  </button>
+                </div>
+
+                <div className="apply-targets-section">
+                  <span className="apply-targets-header">APPLY COLOR TO:</span>
+                  <div className="apply-targets-grid">
+                    <button className="btn-target-apply" onClick={() => applyColorToTarget('all')}>
+                      <span className="target-title">ALL</span>
+                    </button>
+                    <button className="btn-target-apply" onClick={() => applyColorToTarget('left_fountain')}>
+                      <span className="target-title">Left Fountain</span>
+                    </button>
+                    <button className="btn-target-apply" onClick={() => applyColorToTarget('right_fountain')}>
+                      <span className="target-title">Right Fountain</span>
+                    </button>
+                    <button className="btn-target-apply" onClick={() => applyColorToTarget('center')}>
+                      <span className="target-title">The Center</span>
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
         {/* Color Adaptive: Ambient Sensor Status Banner */}
         {isColorAdaptive && (
           <div className="control-card mt-2 ambient-status-card">
@@ -251,102 +342,6 @@ export default function LightAndColor({ appState, setAppState, showToast }) {
         )}
       </div>
 
-      {/* SECTION 3: COLORS DROPDOWN (COLLAPSIBLE CARD) */}
-      <div className="section-block">
-        <div className={`control-card color-collapsible-card ${isScanning ? 'card-scanning' : ''} ${isColorsOpen ? 'expanded' : 'collapsed'}`}>
-          <div
-            className="card-header color-accordion-header"
-            onClick={() => setIsColorsOpen(!isColorsOpen)}
-          >
-            <div className="card-title-group">
-              <div className="icon-badge amber">
-                <Palette size={22} />
-              </div>
-              <div className="title-stack">
-                <div className="title-with-swatch">
-                  <h3 className="card-title">Color Control & Detection</h3>
-                  <span
-                    className="color-mini-swatch"
-                    style={{ backgroundColor: currentColor }}
-                    title={currentColor}
-                  />
-                  <span className="hex-mini-tag">{(currentColor || '').toUpperCase()}</span>
-                </div>
-                <span className="card-status-subtext">
-                  {isColorsOpen ? (isScanning ? 'TCS3200 scanning...' : 'Pick a color or scan with sensor') : 'Tap dropdown to open color tools'}
-                </span>
-              </div>
-            </div>
-
-            <div className="header-right-action">
-              <div className={`dropdown-toggle-pill ${isColorsOpen ? 'active' : ''}`}>
-                <span>{isColorsOpen ? 'Close' : 'Choose'}</span>
-                {isColorsOpen ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
-              </div>
-            </div>
-          </div>
-
-          {/* Collapsible Content */}
-          {isColorsOpen && (
-            <div className="color-collapsible-body">
-              {/* Color Picker */}
-              <ColorPicker rgb={activeRgb} onChange={handlePickerChange} />
-
-              {/* Hex Display & Scan Color Button */}
-              <div className="color-card-footer" style={{ marginTop: 14 }}>
-                <div className="hex-display-group">
-                  <span className="hex-label">HEX: </span>
-                  <span className="hex-display">{(currentColor || '').toUpperCase()}</span>
-                </div>
-
-                <button
-                  className={`btn-amber-sensor ${isScanning ? 'is-scanning' : ''}`}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    handleScanColor();
-                  }}
-                  disabled={isScanning}
-                  title="Detect color with TCS3200 sensor"
-                >
-                  {isScanning ? (
-                    <>
-                      <Loader2 size={16} className="spin-icon" />
-                      <span>Scanning Color...</span>
-                    </>
-                  ) : (
-                    <>
-                      <Sparkles size={16} />
-                      <span>Scan Color Sensor</span>
-                    </>
-                  )}
-                </button>
-              </div>
-
-              {/* Apply Color Target Buttons: ALL, Left fountain, Right fountain, The Center */}
-              <div className="apply-targets-section">
-                <span className="apply-targets-header">APPLY COLOR TO:</span>
-                <div className="apply-targets-grid">
-                  <button className="btn-target-apply" onClick={() => applyColorToTarget('all')}>
-                    <span className="target-title">ALL</span>
-                  </button>
-
-                  <button className="btn-target-apply" onClick={() => applyColorToTarget('left_fountain')}>
-                    <span className="target-title">Left Fountain</span>
-                  </button>
-
-                  <button className="btn-target-apply" onClick={() => applyColorToTarget('right_fountain')}>
-                    <span className="target-title">Right Fountain</span>
-                  </button>
-
-                  <button className="btn-target-apply" onClick={() => applyColorToTarget('center')}>
-                    <span className="target-title">The Center</span>
-                  </button>
-                </div>
-              </div>
-            </div>
-          )}
-        </div>
-      </div>
 
     </div>
   );

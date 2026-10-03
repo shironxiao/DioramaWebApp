@@ -14,10 +14,11 @@ export default function DioramaCanvas({
   fountainAuxStrength = 75,
   fountainForceSensorOn = false,
   fountainColor = '#6bbcd9',
+  fountainAuxColor = '#3B9DB3',
   circleColor = '#d9cebe',
   autoDimming = true,
   audioPlaying = false,
-  onGateClick = () => {}
+  onGateClick = () => { }
 }) {
   const mountRef = useRef(null);
   const sceneRef = useRef(null);
@@ -30,13 +31,14 @@ export default function DioramaCanvas({
   const soundDataRef = useRef({ detected: false, level: 0 });
   // Force sensor data polled from ESP32
   const forceDataRef = useRef({ active: false, level: 0, strength: 75 });
-  
+
   const propsRef = useRef({
     fountainOn,
     fountainStrength,
     fountainAuxStrength,
     fountainForceSensorOn,
     fountainColor,
+    fountainAuxColor,
     circleColor,
     audioPlaying,
     lightingMode,
@@ -52,6 +54,7 @@ export default function DioramaCanvas({
       fountainAuxStrength,
       fountainForceSensorOn,
       fountainColor,
+      fountainAuxColor,
       circleColor,
       audioPlaying,
       lightingMode,
@@ -65,6 +68,7 @@ export default function DioramaCanvas({
     fountainAuxStrength,
     fountainForceSensorOn,
     fountainColor,
+    fountainAuxColor,
     circleColor,
     audioPlaying,
     lightingMode,
@@ -339,15 +343,15 @@ export default function DioramaCanvas({
       const angle = (i / numChildren) * Math.PI * 2;
       const px = Math.cos(angle) * childRadius;
       const pz = Math.sin(angle) * childRadius;
-      
+
       const childBody = new THREE.Mesh(new THREE.ConeGeometry(0.12, 0.4, 8), i % 2 === 0 ? childMat1 : childMat2);
       childBody.position.set(px, 0.74, pz);
       childBody.castShadow = true;
-      
+
       const childHead = new THREE.Mesh(new THREE.SphereGeometry(0.09, 12, 12), childSkinMat);
       childHead.position.set(px, 1.0, pz);
       childHead.castShadow = true;
-      
+
       plazaGroup.add(childBody);
       plazaGroup.add(childHead);
     }
@@ -359,14 +363,8 @@ export default function DioramaCanvas({
     ];
 
     const fountainBaseMat = new THREE.MeshStandardMaterial({ color: 0x7da4b3, roughness: 0.4 });
-    const waterMat = new THREE.MeshStandardMaterial({
-      color: new THREE.Color(fountainColor),
-      roughness: 0.1,
-      transparent: true,
-      opacity: 0.85
-    });
 
-    fountainPositions.forEach((pos) => {
+    fountainPositions.forEach((pos, idx) => {
       const fGroup = new THREE.Group();
       fGroup.position.set(pos.x, 0.5, pos.z);
 
@@ -376,8 +374,17 @@ export default function DioramaCanvas({
       basin.castShadow = true;
       fGroup.add(basin);
 
-      const pool = new THREE.Mesh(new THREE.CylinderGeometry(1.35, 1.35, 0.05, 24), waterMat);
+      // Each pool gets its own material with the correct side color
+      const poolColor = idx === 0 ? fountainColor : (fountainAuxColor || '#3B9DB3');
+      const poolMat = new THREE.MeshStandardMaterial({
+        color: new THREE.Color(poolColor),
+        roughness: 0.1,
+        transparent: true,
+        opacity: 0.85
+      });
+      const pool = new THREE.Mesh(new THREE.CylinderGeometry(1.35, 1.35, 0.05, 24), poolMat);
       pool.position.y = 0.38;
+      pool.userData.isLeft = idx === 0;
       fGroup.add(pool);
       fountainMeshesRef.current.push(pool);
 
@@ -398,9 +405,9 @@ export default function DioramaCanvas({
         const desiredHeight = 1.6;
         const scaleFactor = desiredHeight / (sizeY || 1);
 
-        fountainPositions.forEach((pos) => {
+        fountainPositions.forEach((pos, idx) => {
           const stlMat = new THREE.MeshStandardMaterial({
-            color: new THREE.Color(fountainColor),
+            color: new THREE.Color(idx === 0 ? fountainColor : (propsRef.current.fountainAuxColor || fountainColor)),
             roughness: 0.3,
             metalness: 0.2
           });
@@ -411,6 +418,7 @@ export default function DioramaCanvas({
           stlMesh.position.set(pos.x, 1.3, pos.z);
           stlMesh.castShadow = true;
           stlMesh.receiveShadow = true;
+          stlMesh.userData.isLeft = idx === 0;
 
           fountainMeshesRef.current.push(stlMesh);
           dioramaGroup.add(stlMesh);
@@ -423,15 +431,18 @@ export default function DioramaCanvas({
     // Animated Fountain Water Particle Spray
     const particles = [];
     const particleGeo = new THREE.SphereGeometry(0.06, 6, 6);
-    const particleMat = new THREE.MeshBasicMaterial({
-      color: new THREE.Color(fountainColor),
-      transparent: true,
-      opacity: 0.85
-    });
 
-    fountainPositions.forEach((fp) => {
+    fountainPositions.forEach((fp, fpIdx) => {
+      // Each fountain side gets its own material so colors can differ
+      const pColor = fpIdx === 0 ? fountainColor : (propsRef.current.fountainAuxColor || fountainColor);
+      const sideMat = new THREE.MeshBasicMaterial({
+        color: new THREE.Color(pColor),
+        transparent: true,
+        opacity: 0.85
+      });
+
       for (let p = 0; p < 28; p++) {
-        const particle = new THREE.Mesh(particleGeo, particleMat);
+        const particle = new THREE.Mesh(particleGeo, sideMat);
         particle.position.set(
           fp.x + (Math.random() - 0.5) * 0.3,
           1.5 + Math.random() * 0.7,
@@ -737,7 +748,8 @@ export default function DioramaCanvas({
         lightsOn: isLightsOn,
         brightness: bLevel,
         circleColor: curCircleColor,
-        fountainColor: curFountainColor
+        fountainColor: curFountainColor,
+        fountainAuxColor: curFountainAuxColor
       } = propsRef.current;
 
       const isSoundActive = (lightMode === 'Sound Reactive' || isSoundReactive);
@@ -790,26 +802,56 @@ export default function DioramaCanvas({
           }
         }
       } else {
-        // When not in sound reactive mode, restore custom / default colors
-        if (lightsGroupRef.current && isLightsOn) {
-          const baseIntensity = (bLevel / 100) * 1.3;
+        // Basic / Colorful / Color Adaptive: restore colors based on mode
+        const isBasic = lightMode === 'Basic';
+
+        // Point lights: always warm amber
+        if (lightsGroupRef.current) {
+          const baseIntensity = isLightsOn ? (bLevel / 100) * 1.3 : 0;
           const warmColor = new THREE.Color(0xffea9f);
           lightsGroupRef.current.children.forEach((l) => {
             if (l.color) l.color.copy(warmColor);
             l.intensity = baseIntensity;
           });
         }
+
+        // Plaza (center circle)
         if (plazaMeshRef.current && plazaMeshRef.current.material) {
-          plazaMeshRef.current.material.color.set(curCircleColor || '#D4B78C');
+          const col = isBasic ? '#D4B78C' : (curCircleColor || '#D4B78C');
+          plazaMeshRef.current.material.color.set(col);
         }
+
+        // Fountain meshes (pools + STL)
         if (fountainMeshesRef.current) {
           fountainMeshesRef.current.forEach((m) => {
-            if (m && m.material) m.material.color.set(curFountainColor || '#77898D');
+            if (m && m.material) {
+              let col;
+              if (isBasic) {
+                col = m.userData.isLeft ? '#77898D' : '#3B9DB3';
+              } else {
+                col = m.userData.isLeft
+                  ? (curFountainColor || '#77898D')
+                  : (curFountainAuxColor || curFountainColor || '#3B9DB3');
+              }
+              m.material.color.set(col);
+            }
           });
         }
+
+        // Fountain particles
         if (fountainParticlesRef.current) {
           fountainParticlesRef.current.forEach((p) => {
-            if (p && p.material) p.material.color.set(curFountainColor || '#77898D');
+            if (p && p.material) {
+              let col;
+              if (isBasic) {
+                col = p.userData.isLeft ? '#77898D' : '#3B9DB3';
+              } else {
+                col = p.userData.isLeft
+                  ? (curFountainColor || '#77898D')
+                  : (curFountainAuxColor || curFountainColor || '#3B9DB3');
+              }
+              p.material.color.set(col);
+            }
           });
         }
       }
@@ -866,23 +908,42 @@ export default function DioramaCanvas({
     lightsGroupRef.current.children.forEach((l) => (l.intensity = target));
   }, [lightsOn, brightness]);
 
-  // Sync Plaza Color
+  // Sync Plaza (Center) Color
   useEffect(() => {
-    if (plazaMeshRef.current) {
-      plazaMeshRef.current.material.color.set(circleColor);
+    if (plazaMeshRef.current && plazaMeshRef.current.material) {
+      plazaMeshRef.current.material.color.set(circleColor || '#D4B78C');
     }
   }, [circleColor]);
 
-  // Sync Fountain Color (both pools and classmate's STL models)
+  // Sync Left Fountain Color
   useEffect(() => {
-    if (fountainMeshesRef.current && fountainMeshesRef.current.length > 0) {
-      fountainMeshesRef.current.forEach((mesh) => {
-        if (mesh && mesh.material) {
-          mesh.material.color.set(fountainColor);
-        }
-      });
-    }
+    if (!fountainMeshesRef.current.length) return;
+    fountainMeshesRef.current.forEach((m) => {
+      if (m && m.material && m.userData.isLeft) {
+        m.material.color.set(fountainColor || '#77898D');
+      }
+    });
+    fountainParticlesRef.current.forEach((p) => {
+      if (p && p.material && p.userData.isLeft) {
+        p.material.color.set(fountainColor || '#77898D');
+      }
+    });
   }, [fountainColor]);
+
+  // Sync Right Fountain Color
+  useEffect(() => {
+    if (!fountainMeshesRef.current.length) return;
+    fountainMeshesRef.current.forEach((m) => {
+      if (m && m.material && m.userData.isLeft === false) {
+        m.material.color.set(fountainAuxColor || '#3B9DB3');
+      }
+    });
+    fountainParticlesRef.current.forEach((p) => {
+      if (p && p.material && p.userData.isLeft === false) {
+        p.material.color.set(fountainAuxColor || '#3B9DB3');
+      }
+    });
+  }, [fountainAuxColor]);
 
   return (
     <div className="diorama-preview-card">

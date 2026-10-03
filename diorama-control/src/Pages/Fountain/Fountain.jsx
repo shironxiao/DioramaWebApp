@@ -40,6 +40,8 @@ export default function Fountain({ appState, setAppState, showToast }) {
       <DioramaCanvas
         lightsOn={appState.lightsOn}
         brightness={appState.brightness}
+        lightingMode={appState.lightingMode}
+        soundReactiveOn={appState.soundReactiveOn}
         fountainOn={fountainOn}
         fountainStrength={fountainStrength}
         fountainAuxStrength={fountainAuxStrength}

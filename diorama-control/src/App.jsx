@@ -63,7 +63,7 @@ function App() {
   const updateAppState = (updater) => {
     setAppState((prev) => {
       const next = typeof updater === 'function' ? updater(prev) : { ...prev, ...updater };
-      
+
       if (next.lightsOn !== prev.lightsOn || next.brightness !== prev.brightness) {
         sendLightControl(next.lightsOn, next.brightness);
       }
