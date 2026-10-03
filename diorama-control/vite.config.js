@@ -4,11 +4,16 @@ import fs from 'fs';
 import path from 'path';
 import zlib from 'zlib';
 
+// Pointing directly to your permanent Arduino Diorama sketch's 'data' folder
+const arduinoDataPath = 'C:/Users/Augorio Miguel/OneDrive/Documents/Arduino/Diorama/data';
+
 function gzipPlugin() {
   return {
     name: 'gzip-dist-files',
     closeBundle() {
-      const outDir = 'D:/Diorama/data'; // Specify the output directory here babaguhin mo ito depende sa directory mo nun arduino mo
+      // Uses the path defined above
+      const outDir = arduinoDataPath; 
+      
       function compressDir(dir) {
         if (!fs.existsSync(dir)) return;
         const files = fs.readdirSync(dir);
@@ -24,6 +29,8 @@ function gzipPlugin() {
             const content = fs.readFileSync(filePath);
             const gzipped = zlib.gzipSync(content, { level: 9 });
             fs.writeFileSync(filePath + '.gz', gzipped);
+            // Delete the original uncompressed file — ESP32 only needs the .gz version
+            fs.unlinkSync(filePath);
           }
         }
       }
@@ -37,8 +44,9 @@ export default defineConfig({
   base: './',
   plugins: [react(), gzipPlugin()],
   build: {
-    outDir: 'D:/Diorama/data',
-    emptyOutDir: true
+    // Vite will automatically build and output straight into the Arduino data folder
+    outDir: arduinoDataPath, 
+    emptyOutDir: true // This will cleanly wipe the old build inside the data folder before putting in the new one
   },
   server: {
     watch: {
