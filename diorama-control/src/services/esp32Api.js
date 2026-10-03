@@ -79,6 +79,49 @@ export const sendModeControl = (mode) => {
   });
 };
 
+// ── Audio / SD-card commands ──────────────────────────────────────────────────
+
+/**
+ * Fetch the list of audio files stored on the SD card.
+ * Expects ESP32 to return: { "files": ["001.mp3", "002.mp3", ...] }
+ */
+export const getAudioFiles = async () => {
+  const isSelfHosted =
+    window.location.hostname === esp32Ip ||
+    (window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1');
+  const url = isSelfHosted ? '/api/audio/files' : `http://${esp32Ip}/api/audio/files`;
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 3000);
+    const response = await fetch(url, { signal: controller.signal, mode: 'cors' });
+    clearTimeout(timeoutId);
+    if (!response.ok) return [];
+    const data = await response.json();
+    return Array.isArray(data.files) ? data.files : [];
+  } catch {
+    return [];
+  }
+};
+
+/**
+ * Tell the ESP32 to play a specific track by filename.
+ * Sends: GET /api/audio/play?file=<filename>
+ */
+export const sendAudioPlay = (filename) =>
+  sendEspCommand('/api/audio/play', { file: filename });
+
+/**
+ * Tell the ESP32 to pause playback.
+ */
+export const sendAudioPause = () => sendEspCommand('/api/audio/pause');
+
+/**
+ * Tell the ESP32 to stop playback.
+ */
+export const sendAudioStop = () => sendEspCommand('/api/audio/stop');
+
+// ── Sensor reads ──────────────────────────────────────────────────────────────
+
 // Read sound sensor from ESP32: returns { detected: bool, level: 0-1023 }
 export const getSoundLevel = async () => {
   const isSelfHosted = window.location.hostname === esp32Ip || (window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1');

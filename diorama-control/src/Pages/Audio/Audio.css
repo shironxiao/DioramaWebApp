@@ -2,6 +2,66 @@
   color: #9269db;
 }
 
+/* Section header row (title + refresh button) */
+.section-block-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+.btn-icon-refresh {
+  background: transparent;
+  border: none;
+  color: #9269db;
+  cursor: pointer;
+  padding: 6px;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  transition: background 0.2s;
+}
+
+.btn-icon-refresh:hover {
+  background: #f2ebfc;
+}
+
+.spin {
+  animation: rotate 1s linear infinite;
+}
+
+@keyframes rotate {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
+
+/* Status / empty states */
+.audio-status-msg {
+  font-size: 0.9rem;
+  color: #9287a3;
+  padding: 12px 0;
+}
+
+.audio-empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 32px 0;
+  color: #9287a3;
+  text-align: center;
+}
+
+.audio-empty-icon {
+  opacity: 0.5;
+}
+
+.audio-empty-title {
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: #5c4e6e;
+}
+
 .icon-badge.purple {
   background-color: #f2ebfc;
   color: #9269db;
