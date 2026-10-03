@@ -57,14 +57,14 @@ export const sendFountainControl = (isOn, leftStrength = 100, rightStrength = 75
   });
 };
 
-export const sendColorControl = (hexColor) => {
+export const sendColorControl = (hexColor, target = 'left') => {
   // Convert hex #RRGGBB to R, G, B ints
   const cleanHex = hexColor.replace('#', '');
   const r = parseInt(cleanHex.substring(0, 2), 16) || 0;
   const g = parseInt(cleanHex.substring(2, 4), 16) || 0;
   const b = parseInt(cleanHex.substring(4, 6), 16) || 0;
 
-  return sendEspCommand('/api/color', { r, g, b });
+  return sendEspCommand('/api/color', { r, g, b, target });
 };
 
 export const sendGateControl = (isOpen) => {

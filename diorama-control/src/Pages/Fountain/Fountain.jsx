@@ -15,16 +15,20 @@ export default function Fountain({ appState, setAppState, showToast }) {
       if (target === 'both') {
         next.fountainStrength = sliderValue;
         next.fountainAuxStrength = sliderValue;
-        showToast(`✨ Applied ${sliderValue}% water strength to BOTH fountains!`);
       } else if (target === 'left') {
         next.fountainStrength = sliderValue;
-        showToast(`✨ Applied ${sliderValue}% water strength to Left Fountain!`);
       } else if (target === 'right') {
         next.fountainAuxStrength = sliderValue;
-        showToast(`✨ Applied ${sliderValue}% water strength to Right Fountain!`);
       }
       return next;
     });
+    if (target === 'both') {
+      showToast(`✨ Applied ${sliderValue}% water strength to BOTH fountains!`);
+    } else if (target === 'left') {
+      showToast(`✨ Applied ${sliderValue}% water strength to Left Fountain!`);
+    } else if (target === 'right') {
+      showToast(`✨ Applied ${sliderValue}% water strength to Right Fountain!`);
+    }
   };
 
   return (

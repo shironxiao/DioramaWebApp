@@ -69,9 +69,11 @@ function App() {
     setAppState((prev) => {
       const next = typeof updater === 'function' ? updater(prev) : { ...prev, ...updater };
 
+      // Lights: on/off OR brightness changed
       if (next.lightsOn !== prev.lightsOn || next.brightness !== prev.brightness) {
         sendLightControl(next.lightsOn, next.brightness);
       }
+      // Fountain: on/off OR either strength changed
       if (
         next.fountainOn !== prev.fountainOn ||
         next.fountainStrength !== prev.fountainStrength ||
@@ -79,21 +81,31 @@ function App() {
       ) {
         sendFountainControl(next.fountainOn, next.fountainStrength, next.fountainAuxStrength);
       }
+      // Fountain left color changed — send as primary color
       if (next.fountainColor !== prev.fountainColor) {
-        sendColorControl(next.fountainColor);
+        sendColorControl(next.fountainColor, 'left');
       }
+      // Fountain right color changed — send separately
+      if (next.fountainAuxColor !== prev.fountainAuxColor) {
+        sendColorControl(next.fountainAuxColor, 'right');
+      }
+      // Gate open/close
       if (next.gateOpen !== prev.gateOpen) {
         sendGateControl(next.gateOpen);
       }
+      // Lighting mode changed
       if (next.lightingMode !== prev.lightingMode) {
         sendModeControl(next.lightingMode);
       }
+      // Volume changed
       if (next.volume !== prev.volume) {
         sendVolumeControl(next.volume);
       }
+      // Sound reactive toggle OR intensity changed
       if (next.soundReactiveOn !== prev.soundReactiveOn || next.reactionIntensity !== prev.reactionIntensity) {
         sendSoundReactive(next.soundReactiveOn, next.reactionIntensity);
       }
+      // Force sensor enable/disable
       if (next.fountainForceSensorOn !== prev.fountainForceSensorOn) {
         sendForceSensorControl(next.fountainForceSensorOn);
       }

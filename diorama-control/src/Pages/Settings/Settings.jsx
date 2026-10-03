@@ -50,7 +50,8 @@ export default function SettingsPage({ appState, setAppState, showToast, onLogou
       }));
       showToast('Reset Colors to default.');
     } else if (type === 'all') {
-      setAppState({
+      setAppState((prev) => ({
+        ...prev,
         lightsOn: true,
         brightness: 75,
         lightingMode: 'Sound Reactive',
@@ -62,14 +63,18 @@ export default function SettingsPage({ appState, setAppState, showToast, onLogou
 
         fountainOn: true,
         fountainStrength: 100,
+        fountainAuxStrength: 75,
+        fountainForceSensorOn: false,
         fountainColor: '#77898D',
+        fountainAuxColor: '#3B9DB3',
 
         audioPlaying: false,
         audioTrack: 'No audio selected',
         volume: 70,
 
-        circleColor: '#D4B78C'
-      });
+        circleColor: '#D4B78C',
+        gateOpen: false,
+      }));
       showToast('Reset ALL controls to factory defaults!');
     }
   };

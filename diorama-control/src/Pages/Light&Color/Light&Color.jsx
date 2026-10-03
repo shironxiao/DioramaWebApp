@@ -111,25 +111,27 @@ export default function LightAndColor({ appState, setAppState, showToast }) {
 
   // Apply Color to Target Handler: 'all', 'left_fountain', 'right_fountain', 'center'
   const applyColorToTarget = (target) => {
+    let toastMsg = '';
     setAppState((prev) => {
       const next = { ...prev };
       if (target === 'all') {
         next.circleColor = currentColor;
         next.fountainColor = currentColor;
         next.fountainAuxColor = currentColor;
-        showToast(`✨ Applied ${currentColor.toUpperCase()} to ALL (Center + Left & Right Fountains)!`);
+        toastMsg = `✨ Applied ${currentColor.toUpperCase()} to ALL!`;
       } else if (target === 'left_fountain') {
         next.fountainColor = currentColor;
-        showToast(`✨ Applied ${currentColor.toUpperCase()} to Left Fountain!`);
+        toastMsg = `✨ Applied ${currentColor.toUpperCase()} to Left Fountain!`;
       } else if (target === 'right_fountain') {
         next.fountainAuxColor = currentColor;
-        showToast(`✨ Applied ${currentColor.toUpperCase()} to Right Fountain!`);
+        toastMsg = `✨ Applied ${currentColor.toUpperCase()} to Right Fountain!`;
       } else if (target === 'center') {
         next.circleColor = currentColor;
-        showToast(`✨ Applied ${currentColor.toUpperCase()} to the Center!`);
+        toastMsg = `✨ Applied ${currentColor.toUpperCase()} to the Center!`;
       }
       return next;
     });
+    showToast(toastMsg);
   };
 
   return (
