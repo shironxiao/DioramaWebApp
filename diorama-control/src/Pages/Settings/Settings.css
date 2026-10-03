@@ -1,5 +1,8 @@
 .settings-breadcrumb {
-  color: #7b9484;
+  background: linear-gradient(90deg, var(--c-green), var(--c-teal));
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
 }
 
 .settings-grid {
@@ -9,10 +12,12 @@
 }
 
 .icon-badge.sage {
-  background-color: #e8f0e8;
-  color: #569670;
+  background: linear-gradient(135deg, var(--c-green), var(--c-teal-lt));
+  color: #fff;
+  box-shadow: var(--shadow-green);
 }
 
+/* ── Connection card ── */
 .connection-status-row {
   display: flex;
   align-items: center;
@@ -21,45 +26,28 @@
 }
 
 .status-gold-dot {
-  width: 8px;
-  height: 8px;
+  width: 8px; height: 8px;
   border-radius: 50%;
-  background-color: #d9a04e;
+  background: var(--c-amber-lt);
+  box-shadow: 0 0 6px var(--c-amber-lt);
 }
 
 .status-gold-dot.connected {
-  background-color: #569670;
+  background: var(--c-green-lt);
+  box-shadow: 0 0 8px var(--c-green-lt);
+  animation: pulse-dot 2s infinite;
 }
 
 .status-gold-text {
-  font-size: 0.88rem;
+  font-size: 0.85rem;
   font-weight: 600;
-  color: #8c764e;
+  color: var(--text-2);
 }
 
 .card-description-subtext {
-  font-size: 0.85rem;
-  color: #7a8a7e;
-  line-height: 1.4;
-}
-
-.btn-card-action {
-  align-self: flex-start;
-  background: #ffffff;
-  border: 1px solid #d8e2d8;
-  padding: 8px 18px;
-  border-radius: 12px;
-  font-size: 0.88rem;
-  font-weight: 600;
-  color: #3b4d40;
-  cursor: pointer;
-  transition: all 0.2s ease;
-  margin-top: 6px;
-}
-
-.btn-card-action:hover {
-  background: #f4f8f4;
-  border-color: #569670;
+  font-size: 0.82rem;
+  color: var(--text-2);
+  line-height: 1.45;
 }
 
 .esp-ip-input-group {
@@ -70,85 +58,90 @@
 
 .esp-ip-input {
   flex: 1;
-  padding: 8px 12px;
-  border-radius: 10px;
-  border: 1px solid #d5ded6;
+  padding: 9px 13px;
+  border-radius: 12px;
+  border: 1.5px solid var(--border-md);
+  background: #f8fafc;
   font-family: monospace;
   font-size: 0.88rem;
   font-weight: 600;
-  color: #2d3b32;
+  color: var(--text-1);
   outline: none;
+  transition: border-color 0.2s, box-shadow 0.2s;
 }
 
 .esp-ip-input:focus {
-  border-color: #569670;
+  border-color: var(--c-green);
+  box-shadow: 0 0 0 3px rgba(22,163,74,0.15);
+  background: #fff;
 }
 
 .btn-save-ip {
-  background: #569670;
-  color: #ffffff;
+  background: linear-gradient(135deg, var(--c-green), var(--c-teal-lt));
+  color: #fff;
   border: none;
-  padding: 8px 14px;
-  border-radius: 10px;
-  font-weight: 600;
+  padding: 9px 16px;
+  border-radius: 11px;
+  font-weight: 700;
   font-size: 0.85rem;
   cursor: pointer;
-  transition: background 0.2s ease;
+  transition: opacity 0.2s, transform 0.2s;
+  box-shadow: var(--shadow-green);
 }
 
-.btn-save-ip:hover {
-  background: #46805d;
+.btn-save-ip:hover { opacity: 0.88; transform: translateY(-1px); }
+
+.btn-card-action {
+  align-self: flex-start;
+  background: #fff;
+  border: 1.5px solid var(--border-md);
+  padding: 8px 18px;
+  border-radius: 12px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--text-1);
+  cursor: pointer;
+  transition: all 0.2s ease;
+  margin-top: 6px;
 }
 
-/* Sensors Card */
-.sensor-items-list {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
+.btn-card-action:hover {
+  background: var(--c-green-bg);
+  border-color: var(--c-green-border);
+  color: var(--c-green);
 }
+
+/* ── Sensors card ── */
+.sensor-items-list { display: flex; flex-direction: column; gap: 8px; }
 
 .sensor-item-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  font-size: 0.85rem;
+  font-size: 0.83rem;
+  padding: 8px 12px;
+  background: #f8fafc;
+  border-radius: 10px;
+  border: 1px solid var(--border);
 }
 
-.sensor-name {
-  color: #5a6b5e;
-  font-weight: 500;
-}
+.sensor-name { color: var(--text-2); font-weight: 500; }
 
 .sensor-val {
   display: flex;
   align-items: center;
   gap: 6px;
-  font-weight: 600;
+  font-weight: 700;
 }
 
-.sensor-val.gold {
-  color: #a88344;
-}
+.sensor-val.gold  { color: var(--c-amber); }
+.sensor-val.muted { color: var(--text-3); }
 
-.sensor-val.muted {
-  color: #a39587;
-}
+.dot { width: 6px; height: 6px; border-radius: 50%; }
+.gold-dot  { background: var(--c-amber-lt);  box-shadow: 0 0 5px var(--c-amber-lt);  }
+.muted-dot { background: var(--text-3); }
 
-.dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-}
-
-.gold-dot {
-  background: #d9a04e;
-}
-
-.muted-dot {
-  background: #b5a99c;
-}
-
-/* Control Source Card */
+/* ── Control source card ── */
 .source-buttons-row {
   display: flex;
   gap: 8px;
@@ -156,32 +149,39 @@
 }
 
 .source-pill-btn {
-  background: #ffffff;
-  border: 1px solid #e0e8e0;
+  background: #fff;
+  border: 1.5px solid var(--border-md);
   padding: 8px 16px;
   border-radius: 14px;
-  font-size: 0.85rem;
+  font-size: 0.83rem;
   font-weight: 600;
-  color: #4a5c4e;
+  color: var(--text-2);
   cursor: pointer;
   transition: all 0.2s ease;
 }
 
 .source-pill-btn:hover {
-  background: #f4f8f4;
+  background: var(--c-amber-bg);
+  border-color: var(--c-amber-border);
+  color: var(--c-amber);
 }
 
 .source-pill-btn.active {
-  background: #f7f3e9;
-  border: 1px solid #d9c49e;
-  color: #4a3c28;
+  background: linear-gradient(135deg, var(--c-amber-lt), var(--c-orange));
+  color: #fff;
+  border-color: transparent;
+  box-shadow: var(--shadow-amber);
 }
 
-/* Account Card */
+/* ── Account card ── */
 .account-user-name {
-  font-size: 0.95rem;
-  font-weight: 700;
-  color: #3b4d40;
+  font-size: 0.98rem;
+  font-weight: 800;
+  color: var(--text-1);
+  padding: 8px 12px;
+  background: #f8fafc;
+  border-radius: 10px;
+  border: 1px solid var(--border);
 }
 
 .btn-logout {
@@ -189,27 +189,26 @@
   align-items: center;
   gap: 8px;
   align-self: flex-start;
-  background: #ffffff;
-  border: 1px solid #d8e2d8;
+  background: var(--c-rose-bg);
+  border: 1.5px solid var(--c-rose-border);
   padding: 8px 18px;
   border-radius: 12px;
-  font-size: 0.88rem;
-  font-weight: 600;
-  color: #3b4d40;
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: var(--c-rose);
   cursor: pointer;
   transition: all 0.2s ease;
 }
 
 .btn-logout:hover {
-  background: #fee2e2;
-  border-color: #ef4444;
-  color: #dc2626;
+  background: var(--c-rose);
+  color: #fff;
+  border-color: transparent;
+  box-shadow: 0 4px 18px rgba(225,29,72,0.28);
 }
 
-/* System Reset Card */
-.full-width-card {
-  width: 100%;
-}
+/* ── System reset card ── */
+.full-width-card { width: 100%; }
 
 .system-actions-grid {
   display: grid;
@@ -218,57 +217,41 @@
 }
 
 .btn-system-reset {
-  background: #ffffff;
-  border: 1px solid #e0e8e0;
+  background: #fff;
+  border: 1.5px solid var(--border-md);
   padding: 12px 18px;
   border-radius: 14px;
-  font-size: 0.9rem;
+  font-size: 0.88rem;
   font-weight: 600;
-  color: #3b4d40;
+  color: var(--text-1);
   text-align: left;
   cursor: pointer;
   transition: all 0.2s ease;
 }
 
 .btn-system-reset:hover {
-  background: #f4f8f4;
-  border-color: #569670;
+  background: var(--c-green-bg);
+  border-color: var(--c-green-border);
+  color: var(--c-green);
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-green);
 }
 
 .btn-system-reset.highlight:hover {
-  background: #fef2f2;
-  border-color: #ef4444;
-  color: #dc2626;
+  background: var(--c-rose-bg);
+  border-color: var(--c-rose-border);
+  color: var(--c-rose);
+  box-shadow: 0 4px 18px rgba(225,29,72,0.18);
 }
 
 @media (max-width: 768px) {
-  .settings-grid, .system-actions-grid {
-    grid-template-columns: 1fr;
-  }
-
-  .btn-card-action,
-  .btn-logout,
-  .btn-system-reset {
+  .settings-grid, .system-actions-grid { grid-template-columns: 1fr; }
+  .btn-card-action, .btn-logout, .btn-system-reset {
     width: 100%;
     text-align: center;
     justify-content: center;
     padding: 12px 20px;
-    font-size: 0.9rem;
   }
-
-  .source-buttons-row {
-    flex-wrap: wrap;
-    gap: 8px;
-  }
-
-  .source-pill-btn {
-    flex: 1 1 auto;
-    text-align: center;
-    min-height: 40px;
-  }
-
-  .sensor-item-row {
-    flex-wrap: wrap;
-    gap: 4px;
-  }
+  .source-buttons-row { flex-wrap: wrap; gap: 8px; }
+  .source-pill-btn { flex: 1 1 auto; text-align: center; min-height: 40px; }
 }

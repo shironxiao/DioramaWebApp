@@ -1,9 +1,9 @@
 import React, { useState } from 'react';
-import { Wifi, Cpu, SlidersHorizontal, User, RotateCcw, LogOut } from 'lucide-react';
+import { Wifi, Cpu, SlidersHorizontal } from 'lucide-react';
 import { getEsp32Ip, setEsp32Ip, sendControlSource } from '../../services/esp32Api';
 import './Settings.css';
 
-export default function SettingsPage({ appState, setAppState, showToast, onLogout }) {
+export default function SettingsPage({ appState, showToast }) {
   const [controlSource, setControlSource] = useState('Web App');
   const [isConnected, setIsConnected] = useState(false);
   const [ipAddress, setIpAddress] = useState(() => getEsp32Ip());
@@ -22,60 +22,6 @@ export default function SettingsPage({ appState, setAppState, showToast, onLogou
     } catch (e) {
       setIsConnected(false);
       showToast(`Could not reach ${ipAddress} (Check WiFi/Hotspot)`);
-    }
-  };
-
-  const handleReset = (type) => {
-    if (type === 'lighting') {
-      setAppState((prev) => ({
-        ...prev,
-        lightsOn: true,
-        brightness: 75,
-        lightingMode: 'Sound Reactive',
-        soundReactiveOn: true
-      }));
-      showToast('Reset Lighting controls to default.');
-    } else if (type === 'fountain') {
-      setAppState((prev) => ({
-        ...prev,
-        fountainOn: true,
-        fountainStrength: 100
-      }));
-      showToast('Reset Fountain controls to default.');
-    } else if (type === 'colors') {
-      setAppState((prev) => ({
-        ...prev,
-        fountainColor: '#77898D',
-        circleColor: '#D4B78C'
-      }));
-      showToast('Reset Colors to default.');
-    } else if (type === 'all') {
-      setAppState((prev) => ({
-        ...prev,
-        lightsOn: true,
-        brightness: 75,
-        lightingMode: 'Sound Reactive',
-        soundReactiveOn: true,
-        micSensitivity: 50,
-        reactionIntensity: 65,
-        autoDimming: true,
-        simulatedLight: 72,
-
-        fountainOn: true,
-        fountainStrength: 100,
-        fountainAuxStrength: 75,
-        fountainForceSensorOn: false,
-        fountainColor: '#77898D',
-        fountainAuxColor: '#3B9DB3',
-
-        audioPlaying: false,
-        audioTrack: 'No audio selected',
-        volume: 70,
-
-        circleColor: '#D4B78C',
-        gateOpen: false,
-      }));
-      showToast('Reset ALL controls to factory defaults!');
     }
   };
 
@@ -209,51 +155,6 @@ export default function SettingsPage({ appState, setAppState, showToast, onLogou
           </p>
         </div>
 
-        {/* 4. Account Card */}
-        <div className="control-card">
-          <div className="card-header">
-            <div className="card-title-group">
-              <div className="icon-badge sage">
-                <User size={22} />
-              </div>
-              <h3 className="card-title">Account</h3>
-            </div>
-          </div>
-
-          <div className="account-user-name">Ronald Sevilla</div>
-
-          <button className="btn-logout" onClick={onLogout}>
-            <LogOut size={16} />
-            <span>Logout</span>
-          </button>
-        </div>
-      </div>
-
-      {/* 5. System Card (Full Width) */}
-      <div className="control-card full-width-card">
-        <div className="card-header">
-          <div className="card-title-group">
-            <div className="icon-badge sage">
-              <RotateCcw size={22} />
-            </div>
-            <h3 className="card-title">System</h3>
-          </div>
-        </div>
-
-        <div className="system-actions-grid">
-          <button className="btn-system-reset" onClick={() => handleReset('lighting')}>
-            Reset Lighting
-          </button>
-          <button className="btn-system-reset" onClick={() => handleReset('fountain')}>
-            Reset Fountain
-          </button>
-          <button className="btn-system-reset" onClick={() => handleReset('colors')}>
-            Reset Colors
-          </button>
-          <button className="btn-system-reset highlight" onClick={() => handleReset('all')}>
-            Reset All Controls
-          </button>
-        </div>
       </div>
     </div>
   );

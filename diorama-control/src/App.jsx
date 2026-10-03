@@ -25,14 +25,9 @@ function App() {
   const [activeTab, setActiveTab] = useState('home');
   const [toastMessage, setToastMessage] = useState(null);
 
-  // Persistent login — read saved session from localStorage
-  const [isLoggedIn, setIsLoggedIn] = useState(() => {
-    return localStorage.getItem('diorama_logged_in') === 'true';
-  });
-  const [user, setUser] = useState(() => {
-    const saved = localStorage.getItem('diorama_user');
-    return saved ? JSON.parse(saved) : { name: '' };
-  });
+  // Skip login — go directly to the app
+  const [isLoggedIn, setIsLoggedIn] = useState(true);
+  const [user, setUser] = useState({ name: 'Guest' });
 
   // Shared application state
   const [appState, setAppState] = useState({

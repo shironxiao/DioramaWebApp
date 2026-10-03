@@ -1,3 +1,5 @@
+@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Space+Grotesk:wght@500;600;700&display=swap');
+
 :root {
   font-family: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
   color-scheme: light;
@@ -5,24 +7,67 @@
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+
+  /* ── Vibrant palette ── */
+  --c-green:       #16a34a;
+  --c-green-lt:    #22c55e;
+  --c-green-bg:    #dcfce7;
+  --c-green-border:#86efac;
+
+  --c-teal:        #0891b2;
+  --c-teal-lt:     #06b6d4;
+  --c-teal-bg:     #cffafe;
+  --c-teal-border: #67e8f9;
+
+  --c-amber:       #d97706;
+  --c-amber-lt:    #f59e0b;
+  --c-amber-bg:    #fef3c7;
+  --c-amber-border:#fcd34d;
+
+  --c-purple:      #7c3aed;
+  --c-purple-lt:   #a855f7;
+  --c-purple-bg:   #f3e8ff;
+  --c-purple-border:#c4b5fd;
+
+  --c-rose:        #e11d48;
+  --c-rose-bg:     #ffe4e6;
+  --c-rose-border: #fda4af;
+
+  --c-indigo:      #4f46e5;
+  --c-indigo-bg:   #e0e7ff;
+  --c-indigo-border:#a5b4fc;
+
+  --c-orange:      #ea580c;
+  --c-orange-bg:   #ffedd5;
+
+  /* ── Surface ── */
+  --bg-main:    #f0faf4;
+  --bg-card:    #ffffff;
+  --bg-card-2:  #f8fafc;
+  --border:     #e2e8f0;
+  --border-md:  #cbd5e1;
+  --text-1:     #0f172a;
+  --text-2:     #475569;
+  --text-3:     #94a3b8;
+
+  --radius-card: 22px;
+  --shadow-card: 0 2px 12px rgba(0,0,0,0.06), 0 1px 3px rgba(0,0,0,0.04);
+  --shadow-card-hover: 0 8px 28px rgba(0,0,0,0.10), 0 2px 6px rgba(0,0,0,0.05);
+  --shadow-green:  0 4px 18px rgba(22,163,74,0.22);
+  --shadow-teal:   0 4px 18px rgba(8,145,178,0.22);
+  --shadow-amber:  0 4px 18px rgba(217,119,6,0.22);
+  --shadow-purple: 0 4px 18px rgba(124,58,237,0.22);
 }
 
-* {
-  box-sizing: border-box;
-  margin: 0;
-  padding: 0;
-}
+* { box-sizing: border-box; margin: 0; padding: 0; }
 
 body {
-  margin: 0;
-  padding: 0;
-  background-color: #f7f7f2;
-  color: #2d3b32;
+  background: var(--bg-main);
+  color: var(--text-1);
   width: 100vw;
   overflow-x: hidden;
+  font-family: 'Plus Jakarta Sans', sans-serif;
+  line-height: 1.5;
 }
 
-#root {
-  width: 100%;
-  min-height: 100vh;
-}
+#root { width: 100%; min-height: 100vh; }

@@ -947,7 +947,6 @@ export default function DioramaCanvas({
 
   return (
     <div className="diorama-preview-card">
-      <div className="card-top-tag">YOUR LITTLE WORLD</div>
       <div className="canvas-wrapper" ref={mountRef}></div>
       <div className="canvas-overlay-instruction">Live 3D preview · drag to rotate</div>
     </div>
