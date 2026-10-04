@@ -1,44 +1,55 @@
 /*
-  Silvestre del Moro Park - TFT UI v3 (WHITE theme, Lights + Audio)
-  ESP32 + ILI9488 480x320 + XPT2046 touch + SD audio (I2S)
+  Silvestre del Moro Park — Diorama Controller v4
+  ESP32 + ILI9488 480×320 + XPT2046 touch + SD audio (I2S) + WiFi HTTP server
 
-  Requires in User_Setup.h:  #define TOUCH_CS 21
-  Libraries: TFT_eSPI, ESP32-audioI2S (schreibfaul1)
+  TFT scope  : Gate access screen  |  Lights (Basic / Sound / Adaptive)  |  Audio
+  Web App    : Full control via HTTP GET endpoints (same ESP32 state)
 
-  Wiring:
-    TFT/touch  : per your User_Setup.h (T_CLK 18, T_DIN 23, T_DO 19, T_CS 21)
-    SD card    : SCK 14, MISO 33, MOSI 25, CS 13   (separate bus from TFT)
-    I2S amp    : BCLK 26, LRC 27, DIN 22           (e.g. MAX98357A)
-    Sound mic  : GPIO 34 (analog)
+  ── Wiring ──────────────────────────────────────────────────────────────────
+  TFT / touch : per User_Setup.h  (T_CLK 18, T_DIN 23, T_DO 19, T_CS 21)
+  SD card     : SCK 14, MISO 33, MOSI 25, CS 13   (HSPI, separate from TFT)
+  I2S amp     : BCLK 26, LRC 27, DIN 22           (e.g. MAX98357A)
+  Mic         : GPIO 34  (ADC1 analog)
+  RGB LEDs    : R=13, G=14, B=25  (PWM — shared with SD; disable SD when using)
+  Fountain    : GPIO 33            (shared with SD MISO)
+  Fingerprint : RX2=16 ← sensor TX,  TX2=17 → sensor RX  (UART2)
+  Gate servo  : GPIO 15
 
-  Diorama hardware pins:
-    Light    = GPIO 26  (I2S_BCLK shares — disconnect when using audio)
-    Fountain = GPIO 33  (SD_MISO shares  — disconnect when using audio)
-    Red      = GPIO 13  (SD_CS)
-    Green    = GPIO 14  (SD_SCK)
-    Blue     = GPIO 25  (SD_MOSI)
-    NOTE: The RGB + Fountain pins overlap with the SD/I2S bus.
-    Populate showZones() / setup() based on which features you have wired.
+  ── HTTP API (same endpoints as Web App) ────────────────────────────────────
+  GET /api/light?state=on|off&brightness=0-100
+  GET /api/mode?mode=Basic|Colorful|Sound+Reactive|Color+Adaptive
+  GET /api/color?r=0-255&g=0-255&b=0-255&target=left|right|center|all
+  GET /api/fountain?state=on|off&strength=0-100&auxStrength=0-100
+  GET /api/gate?state=open|closed
+  GET /api/gate/status                          → {"open":true|false}
+  GET /api/audio/play?file=xxx.mp3
+  GET /api/audio/pause
+  GET /api/audio/stop
+  GET /api/audio/volume?volume=0-100
+  GET /api/audio/files                          → {"files":["001.mp3",...]}
+  GET /api/sound-reactive?state=on|off&intensity=0-100
+  GET /api/sound                                → {"detected":bool,"level":0-1023}
 */
 
-// =====================================================
-// TYPES — must be included before Arduino auto-protos
-// =====================================================
+// ── Types (before Arduino auto-protos) ──────────────────────────────────────
 #include "Diorama_types.h"
 
-// =====================================================
-// LIBRARIES
-// =====================================================
+// ── Libraries ────────────────────────────────────────────────────────────────
 #include <TFT_eSPI.h>
 #include <SPI.h>
 #include <SD.h>
 #include <FS.h>
 #include <SPIFFS.h>
 #include "Audio.h"
+#include <WiFi.h>
+#include <WebServer.h>
+#include <ArduinoJson.h>
 
-// =====================================================
-// PINS — SD / I2S / MIC
-// =====================================================
+// ── WiFi credentials — change to your network ────────────────────────────────
+#define WIFI_SSID  "YourSSID"
+#define WIFI_PASS  "YourPassword"
+
+// ── Pins ─────────────────────────────────────────────────────────────────────
 #define SD_SCK    14
 #define SD_MISO   33
 #define SD_MOSI   25
@@ -46,44 +57,25 @@
 #define I2S_BCLK  26
 #define I2S_LRC   27
 #define I2S_DOUT  22
-#define MIC_PIN   34   // ADC1 analog sound sensor
+#define MIC_PIN   34
 
-// =====================================================
-// FINGERPRINT / GATE PINS
-// =====================================================
-// Connect the fingerprint sensor's TX/RX here.
-// Touch-to-scan fallback is used if FINGERPRINT_SIMULATE = true.
-#define FINGERPRINT_TX   16   // ESP32 RX2 ← sensor TX
-#define FINGERPRINT_RX   17   // ESP32 TX2 → sensor RX
-#define GATE_SERVO_PIN   15   // Servo or solenoid driving the physical gate
-#define FINGERPRINT_SIMULATE true  // Set false when real sensor is wired
+#define RED_PIN      13
+#define GREEN_PIN    14
+#define BLUE_PIN     25
+#define FOUNTAIN_PIN 33   // shared with SD MISO — see note above
+#define GATE_PIN     15   // gate servo / relay
 
-// Touch calibration stored in SPIFFS.
-// Change CALIBRATION_FILE to force a fresh calibration.
-// Set REPEAT_CAL true to always recalibrate on boot.
+// Calibration
 #define CALIBRATION_FILE "/DioramaCalData"
 #define REPEAT_CAL       false
 
-// =====================================================
-// DIORAMA RGB HARDWARE PINS
-// (overlap with SD/I2S — see note above)
-// =====================================================
-const int LIGHT_PIN    = 26;
-const int FOUNTAIN_PIN = 33;
-const int RED_PIN      = 13;
-const int GREEN_PIN    = 14;
-const int BLUE_PIN     = 25;
+// ── Objects ───────────────────────────────────────────────────────────────────
+TFT_eSPI   tft = TFT_eSPI();
+SPIClass   sdSPI(HSPI);
+Audio      audio;
+WebServer  server(80);
 
-// =====================================================
-// OBJECTS
-// =====================================================
-TFT_eSPI  tft = TFT_eSPI();
-SPIClass  sdSPI(HSPI);
-Audio     audio;
-
-// =====================================================
-// COLORS  (white / light-green theme, RGB565)
-// =====================================================
+// ── Colour palette (RGB565) ───────────────────────────────────────────────────
 constexpr uint16_t rgb565(uint8_t r, uint8_t g, uint8_t b) {
   return ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3);
 }
@@ -92,25 +84,28 @@ const uint16_t C_CARD   = rgb565(255, 255, 255);
 const uint16_t C_HDR    = rgb565(255, 255, 255);
 const uint16_t C_BORDER = rgb565(196, 217, 205);
 const uint16_t C_TRACK  = rgb565(215, 228, 222);
-const uint16_t C_TEXT   = rgb565(20,  35,  30);
+const uint16_t C_TEXT   = rgb565( 20,  35,  30);
 const uint16_t C_DIM    = rgb565(120, 140, 132);
-const uint16_t C_ONACC  = rgb565(255, 255, 255);
-const uint16_t C_GREEN  = rgb565(16,  150, 95);
-const uint16_t C_AMBER  = rgb565(230, 130, 0);
-const uint16_t C_RED    = rgb565(220, 50,  60);
+const uint16_t C_WHITE  = rgb565(255, 255, 255);
+const uint16_t C_GREEN  = rgb565( 16, 150,  95);
+const uint16_t C_AMBER  = rgb565(230, 130,   0);
+const uint16_t C_PURPLE = rgb565(124,  58, 237);
+const uint16_t C_RED    = rgb565(220,  50,  60);
 
-// =====================================================
-// GEOMETRY
-// =====================================================
-const int W = 480, H = 320, HDR_H = 36;
-const int SL_X0 = 25, SL_X1 = 455;
-const int HUE_Y = 152, SAT_Y = 180;
+// ── Geometry ──────────────────────────────────────────────────────────────────
+//  480 × 320 landscape.  Header = top 36px.  Usable area = y 36..319 (284px).
+const int W = 480, H = 320;
+const int HDR_H = 36;         // header bar height
+const int BODY_Y = HDR_H;     // body starts here
+const int BODY_H = H - HDR_H; // 284 px
 
-// =====================================================
-// COLOR HELPERS
-// =====================================================
+// Slider rail X extents
+const int SL_X0 = 20, SL_X1 = 460;
 
-RGB hsv(int h, int s, int v) {   // h 0-359, s/v 0-100
+// ── Colour helpers ────────────────────────────────────────────────────────────
+struct RGB { uint8_t r, g, b; };
+
+RGB hsv(int h, int s, int v) {
   float S = s / 100.f, V = v / 100.f;
   float C = V * S, X = C * (1 - fabsf(fmodf(h / 60.f, 2.f) - 1)), m = V - C;
   float r, g, b;
@@ -120,316 +115,174 @@ RGB hsv(int h, int s, int v) {   // h 0-359, s/v 0-100
     case 2: r = 0; g = C; b = X; break;
     case 3: r = 0; g = X; b = C; break;
     case 4: r = X; g = 0; b = C; break;
-    default: r = C; g = 0; b = X; break;
+    default: r = C; g = 0; b = X;
   }
   return { (uint8_t)((r + m) * 255 + .5f),
            (uint8_t)((g + m) * 255 + .5f),
            (uint8_t)((b + m) * 255 + .5f) };
 }
-
-void rgbToHs(RGB c, int &h, int &s) {
-  float r = c.r / 255.f, g = c.g / 255.f, b = c.b / 255.f;
-  float mx = max(r, max(g, b)), mn = min(r, min(g, b)), d = mx - mn, hh = 0;
-  if (d > 0) {
-    if (mx == r)      hh = 60 * fmodf((g - b) / d, 6.f);
-    else if (mx == g) hh = 60 * ((b - r) / d + 2);
-    else              hh = 60 * ((r - g) / d + 4);
-    if (hh < 0) hh += 360;
-  }
-  h = (int)hh % 360;
-  s = mx == 0 ? 0 : (int)(d / mx * 100);
-}
-
 uint16_t c565(RGB c) { return tft.color565(c.r, c.g, c.b); }
 
+// Preset palette (12 swatches on Colorful mode)
 const RGB PAL[12] = {
-  {255,68,68},{255,140,0},{255,215,0},{124,252,0},{0,191,255},{138,43,226},
-  {255,105,180},{255,255,255},{0,206,209},{255,99,71},{65,105,225},{50,205,50}
+  {255, 68, 68},{255,140,  0},{255,215,  0},{124,252,  0},
+  {  0,191,255},{138, 43,226},{255,105,180},{255,255,255},
+  {  0,206,209},{255, 99, 71},{ 65,105,225},{ 50,205, 50}
 };
 
-// =====================================================
-// STATE
-// =====================================================
-Page page      = P_LIGHTS;
-Mode mode      = M_BASIC;
-Drag dragging  = D_NONE;
+// ── Shared diorama state ──────────────────────────────────────────────────────
+// Lights
+bool    lightsOn    = false;   // start OFF until gate opens
+int     brightness  = 75;      // 0-100
+String  lightMode   = "Basic"; // Basic | Colorful | Sound Reactive | Color Adaptive
+bool    soundReactive = false;
+int     soundIntensity = 65;   // 0-100
 
-bool lightsOn    = true;
-bool fountainOn  = false;
-int  brightness  = 100;
+// Color zones (left, right, center)  — index 0=left 1=right 2=center
+RGB     zone[3]     = { {255,180,90}, {255,180,90}, {255,180,90} };
+// Working colour for Colorful mode picker
+int     hue = 36, sat = 46;
+RGB     cur = {255, 180, 90};
+int     lastApplied = -1; // 0=ALL 1=Left 2=Right 3=Center
 
-int  hue = 36, sat = 46;
-RGB  cur  = hsv(36, 46, 100);
-RGB  zone[3] = { {255,180,90}, {255,180,90}, {255,180,90} };
-int  lastApplied = -1;   // 0=ALL, 1=Left, 2=Right, 3=Center
+// Fountain
+bool    fountainOn  = false;
+int     fountainStr = 100;  // 0-100
+int     fountainAux = 75;   // 0-100
 
+// Gate
+bool    gateOpen    = false;
+GateState gateState = GS_WAITING;
+uint32_t  gateMs    = 0;
+const uint32_t SCAN_MS    = 2000;
+const uint32_t GOODBYE_MS = 3000;
+
+// Audio
+#define MAX_TRACKS 24
+char     trackPath[MAX_TRACKS][48];
+int      trackCount = 0, curTrack = 0;
+int      volume     = 60;   // 0-100
+bool     sdOk = false, audioPlaying = false, audioStarted = false;
+uint32_t trackStartMs = 0;
+
+// TFT page / mode
+Page  page      = P_LIGHTS;
+Mode  tftMode   = M_BASIC;   // TFT-local mode tab
+Drag  dragging  = D_NONE;
+
+// Sound reactive live level (mic)
 int   sens    = 60;
 float lvl     = 0;
 int   hueBase = 0;
 RGB   live    = {255, 180, 90};
 
-// Audio
-#define MAX_TRACKS 24
-char     trackPath[MAX_TRACKS][48];
-int      trackCount = 0, curTrack = 0, volume = 60;
-bool     sdOk = false, audioPlaying = false, audioStarted = false;
-uint32_t trackStartMs = 0;
-
 bool wasTouched = false;
-
-void onDrag(int x);   // forward declaration
-
-// =====================================================
-// GATE STATE MACHINE
-// =====================================================
-
-GateState gateState    = GS_WAITING;
-uint32_t  gateEventMs  = 0;   // timestamp of last gate event
-
-// Durations
-const uint32_t SCAN_DURATION_MS    = 2000;   // fingerprint scan animation time
-const uint32_t GOODBYE_DURATION_MS = 3000;   // goodbye message hold time
 
 // Forward declarations
 void drawGateScreen();
-void enterGateState(GateState next);
+void enterGateState(GateState s);
+void drawHeader();
+void drawLights();
+void drawAudio();
+void onDrag(int x);
+void pushZones();
+void applyHardwareLight();
+void applyHardwareGate(bool open);
 
-// ── Physical gate actuator (servo / solenoid) ─────────────────────────────
-void setGateActuator(bool open) {
-  // Replace with your servo/relay logic, e.g.:
+// ═══════════════════════════════════════════════════════════════════════════════
+// HARDWARE OUTPUT
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// Push zone colours to PWM pins (brightness-scaled).
+// All three zones share one RGB strip on current wiring → use zone[2] (center).
+void pushZones() {
+  for (int i = 0; i < 3; i++) {
+    zone[i].r = constrain(zone[i].r, 0, 255);
+    zone[i].g = constrain(zone[i].g, 0, 255);
+    zone[i].b = constrain(zone[i].b, 0, 255);
+  }
+  if (lightsOn) {
+    analogWrite(RED_PIN,   zone[2].r * brightness / 100);
+    analogWrite(GREEN_PIN, zone[2].g * brightness / 100);
+    analogWrite(BLUE_PIN,  zone[2].b * brightness / 100);
+  } else {
+    analogWrite(RED_PIN,   0);
+    analogWrite(GREEN_PIN, 0);
+    analogWrite(BLUE_PIN,  0);
+  }
+}
+
+void setAll(RGB c) {
+  zone[0] = zone[1] = zone[2] = c;
+  pushZones();
+}
+
+void applyHardwareGate(bool open) {
+  // Replace with servo / relay:
   // myServo.write(open ? 90 : 0);
-  // digitalWrite(GATE_RELAY_PIN, open ? HIGH : LOW);
+  // digitalWrite(GATE_PIN, open ? HIGH : LOW);
   Serial.printf("[GATE] Actuator: %s\n", open ? "OPEN" : "CLOSED");
 }
 
-// ── State transitions ─────────────────────────────────────────────────────
-void enterGateState(GateState next) {
-  gateState   = next;
-  gateEventMs = millis();
-
-  switch (next) {
-    case GS_WAITING:
-      Serial.println("[GATE] State: WAITING — Gate closed, awaiting fingerprint.");
-      setGateActuator(false);
-      drawGateScreen();
-      break;
-
-    case GS_SCANNING:
-      Serial.println("[GATE] State: SCANNING — Fingerprint sensor reading...");
-      drawGateScreen();
-      break;
-
-    case GS_OPEN:
-      Serial.println("[GATE] State: OPEN — Fingerprint verified! Gate opened, UI unlocked.");
-      setGateActuator(true);
-      drawGateScreen();
-      // After showing welcome briefly, draw the normal UI
-      delay(1500);
-      drawHeader();
-      drawLights();
-      break;
-
-    case GS_GOODBYE:
-      Serial.println("[GATE] State: GOODBYE — Gate closed, showing goodbye message.");
-      setGateActuator(false);
-      drawGateScreen();
-      break;
-  }
-}
-
-// ── Gate screen renderer ──────────────────────────────────────────────────
-void drawGateScreen() {
-  tft.fillScreen(C_BG);
-
-  // Top accent bar (green)
-  tft.fillRect(0, 0, W, 4, C_GREEN);
-
-  // Park name
-  text("Silvestre del Moro Park", W / 2, 30, 2, C_DIM, C_BG, MC_DATUM);
-
-  // Central icon area
-  int cx = W / 2, cy = 130;
-  tft.fillCircle(cx, cy, 50, C_CARD);
-  tft.drawCircle(cx, cy, 50, C_GREEN);
-  tft.drawCircle(cx, cy, 46, C_BORDER);
-
-  switch (gateState) {
-    case GS_WAITING:
-      // Fingerprint icon (approximated with circles + lines)
-      tft.drawCircle(cx,     cy,     22, C_GREEN);
-      tft.drawCircle(cx,     cy,     14, C_GREEN);
-      tft.drawCircle(cx,     cy,      6, C_GREEN);
-      tft.drawFastVLine(cx,  cy - 22, 44, C_GREEN);
-      tft.drawFastHLine(cx - 22, cy,  44, C_GREEN);
-      text("Hi! Welcome!", W / 2, 200, 4, C_TEXT, C_BG, MC_DATUM);
-      text("Please scan your fingerprint to enter.", W / 2, 228, 2, C_DIM, C_BG, MC_DATUM);
-      // Tap-to-scan hint
-      card(W / 2 - 110, 260, 220, 46, C_GREEN, C_GREEN);
-      text("TAP HERE TO SCAN", W / 2, 283, 2, C_ONACC, C_GREEN, MC_DATUM);
-      break;
-
-    case GS_SCANNING:
-      // Animated-style scanning indicator
-      tft.drawCircle(cx, cy, 22, C_GREEN);
-      tft.drawCircle(cx, cy, 14, C_AMBER);
-      tft.drawCircle(cx, cy,  6, C_GREEN);
-      tft.drawFastVLine(cx, cy - 22, 44, C_AMBER);
-      tft.drawFastHLine(cx - 22, cy, 44, C_AMBER);
-      text("Scanning...", W / 2, 200, 4, C_AMBER, C_BG, MC_DATUM);
-      text("Verifying your fingerprint, please wait...", W / 2, 228, 2, C_DIM, C_BG, MC_DATUM);
-      // Progress bar
-      tft.fillRoundRect(W / 2 - 110, 265, 220, 12, 6, C_TRACK);
-      {
-        uint32_t elapsed = millis() - gateEventMs;
-        int fw = constrain((int)(220L * elapsed / SCAN_DURATION_MS), 0, 220);
-        if (fw > 0) tft.fillRoundRect(W / 2 - 110, 265, fw, 12, 6, C_GREEN);
-      }
-      break;
-
-    case GS_OPEN:
-      // Unlock icon (open padlock represented by open arc)
-      tft.drawCircle(cx, cy - 8, 18, C_GREEN);
-      tft.fillRect(cx - 18, cy - 8, 36, 30, C_BG);  // erase bottom half of circle
-      tft.fillRoundRect(cx - 18, cy + 4, 36, 26, 4, C_GREEN);
-      tft.fillCircle(cx, cy + 14, 5, C_ONACC);
-      text("Welcome!", W / 2, 200, 4, C_GREEN, C_BG, MC_DATUM);
-      text("You may now interact with the diorama.", W / 2, 228, 2, C_DIM, C_BG, MC_DATUM);
-      break;
-
-    case GS_GOODBYE:
-      // Lock icon (closed padlock)
-      tft.drawCircle(cx, cy - 8, 18, C_RED);
-      tft.fillRoundRect(cx - 18, cy + 4, 36, 26, 4, C_RED);
-      tft.fillCircle(cx, cy + 14, 5, C_ONACC);
-      // Draw closed top arc by drawing two short lines
-      tft.drawCircle(cx, cy - 8, 18, C_RED);
-      tft.fillRect(cx - 19, cy - 8, 38, 18, C_BG);    // hide lower half of circle
-      tft.drawArc(cx, cy - 8, 18, 12, 180, 360, C_RED, C_BG); // top half arc only
-      text("Goodbye!", W / 2, 200, 4, C_RED, C_BG, MC_DATUM);
-      text("Thank you for visiting.", W / 2, 228, 2, C_DIM, C_BG, MC_DATUM);
-      break;
-  }
-}
-
-// ── Fingerprint polling (simulation: touch the scan button) ──────────────
-void pollGate() {
-  // Timed transitions
-  if (gateState == GS_SCANNING) {
-    if (millis() - gateEventMs >= SCAN_DURATION_MS) {
-      // Scan complete → open gate
-      enterGateState(GS_OPEN);
-    } else {
-      // Refresh progress bar during scan
-      uint32_t elapsed = millis() - gateEventMs;
-      int fw = constrain((int)(220L * elapsed / SCAN_DURATION_MS), 0, 220);
-      if (fw > 0) tft.fillRoundRect(W / 2 - 110, 265, fw, 12, 6, C_GREEN);
-    }
-    return;
-  }
-
-  if (gateState == GS_GOODBYE) {
-    if (millis() - gateEventMs >= GOODBYE_DURATION_MS) {
-      enterGateState(GS_WAITING);
-    }
-    return;
-  }
-
-  // TODO: When real fingerprint sensor is wired, replace the
-  // FINGERPRINT_SIMULATE block below with actual sensor read:
-  //   if (finger.getImage() == FINGERPRINT_OK) { ... }
-}
-
-// =====================================================
-// HARDWARE HOOKS
-// =====================================================
-
-// Apply final (brightness-scaled) colors to physical RGB output.
-// Center zone drives the single RGB LED strip currently wired.
-void showZones(RGB left, RGB right, RGB center) {
-  analogWrite(RED_PIN,   center.r);
-  analogWrite(GREEN_PIN, center.g);
-  analogWrite(BLUE_PIN,  center.b);
-  // Fountain pin is shared with SD_MISO on this wiring — only drive it
-  // when SD is not in use, or rewire to a free GPIO.
-  // digitalWrite(FOUNTAIN_PIN, fountainOn ? HIGH : LOW);
-}
-
-// Return true and fill *out if a color sensor (e.g. TCS34725) is connected.
-bool readColorSensor(RGB *out) {
-  return false;   // no sensor wired yet
-}
-
-// =====================================================
-// ZONE CONTROL
-// =====================================================
-
-void pushZones() {
-  RGB o[3];
-  for (int i = 0; i < 3; i++) {
-    if (lightsOn)
-      o[i] = { (uint8_t)(zone[i].r * brightness / 100),
-               (uint8_t)(zone[i].g * brightness / 100),
-               (uint8_t)(zone[i].b * brightness / 100) };
-    else
-      o[i] = {0, 0, 0};
-  }
-  showZones(o[0], o[1], o[2]);
-}
-
-void setAll(RGB c) { zone[0] = zone[1] = zone[2] = c; pushZones(); }
-
-// =====================================================
+// ═══════════════════════════════════════════════════════════════════════════════
 // DRAWING HELPERS
-// =====================================================
+// ═══════════════════════════════════════════════════════════════════════════════
 
 bool inRect(int x, int y, int rx, int ry, int rw, int rh) {
   return x >= rx && x < rx + rw && y >= ry && y < ry + rh;
 }
 
-void text(const char* s, int x, int y, int font, uint16_t fg, uint16_t bg,
-          uint8_t datum = TL_DATUM) {
+// Draw text with given font, colours and datum
+void txt(const char* s, int x, int y, int font, uint16_t fg, uint16_t bg,
+         uint8_t datum = TL_DATUM) {
   tft.setTextColor(fg, bg);
   tft.setTextDatum(datum);
   tft.drawString(s, x, y, font);
 }
 
+// Rounded-rect card outline
 void card(int x, int y, int w, int h, uint16_t fill, uint16_t border) {
   tft.fillRoundRect(x, y, w, h, 8, fill);
   tft.drawRoundRect(x, y, w, h, 8, border);
 }
 
-void button(int x, int y, int w, int h, const char* label, bool active, uint16_t accent) {
+// Labelled button (filled when active)
+void btn(int x, int y, int w, int h, const char* label, bool active,
+         uint16_t accent) {
   card(x, y, w, h, active ? accent : C_CARD, active ? accent : C_BORDER);
-  text(label, x + w / 2, y + h / 2, 2,
-       active ? C_ONACC : C_TEXT,
-       active ? accent  : C_CARD,
-       MC_DATUM);
+  txt(label, x + w / 2, y + h / 2, 2,
+      active ? C_WHITE : C_TEXT,
+      active ? accent  : C_CARD,
+      MC_DATUM);
 }
 
-void toggleSwitch(int x, int y, bool on, uint16_t accent) {
+// Toggle switch (44×22)
+void toggleSw(int x, int y, bool on, uint16_t accent) {
   tft.fillRoundRect(x, y, 44, 22, 11, on ? accent : C_TRACK);
-  tft.fillCircle(on ? x + 33 : x + 11, y + 11, 8, C_CARD);
+  tft.fillCircle(on ? x + 33 : x + 11, y + 11, 8, C_WHITE);
   tft.drawCircle(on ? x + 33 : x + 11, y + 11, 8, C_BORDER);
 }
 
+// Horizontal slider (rail + filled portion + thumb)
 void drawSlider(int y, int val, uint16_t accent) {
-  tft.fillRect(10, y - 16, 460, 32, C_BG);
+  tft.fillRect(0, y - 18, W, 36, C_BG);
   tft.fillRoundRect(SL_X0, y - 4, SL_X1 - SL_X0, 8, 4, C_TRACK);
   int kx = SL_X0 + (long)(SL_X1 - SL_X0) * val / 100;
-  if (kx > SL_X0) tft.fillRoundRect(SL_X0, y - 4, kx - SL_X0, 8, 4, accent);
-  tft.fillCircle(kx, y, 11, accent);
-  tft.drawCircle(kx, y, 11, C_TEXT);
+  if (kx > SL_X0)
+    tft.fillRoundRect(SL_X0, y - 4, kx - SL_X0, 8, 4, accent);
+  tft.fillCircle(kx, y, 12, accent);
+  tft.drawCircle(kx, y, 12, C_TEXT);
 }
 
+// Gradient hue/sat slider
 void drawGradSlider(int y, bool isHue) {
-  tft.fillRect(10, y - 14, 460, 28, C_BG);
-  for (int x = SL_X0; x < SL_X1; x += 5) {
+  tft.fillRect(0, y - 14, W, 28, C_BG);
+  for (int x = SL_X0; x < SL_X1; x += 4) {
     int p = (long)(x - SL_X0) * 100 / (SL_X1 - SL_X0);
     RGB c = isHue ? hsv(p * 359 / 100, 100, 100) : hsv(hue, p, 100);
-    tft.fillRect(x, y - 4, 5, 8, c565(c));
+    tft.fillRect(x, y - 4, 4, 8, c565(c));
   }
-  int kx = SL_X0 + (long)(SL_X1 - SL_X0) *
-            (isHue ? hue * 100 / 359 : sat) / 100;
+  int kx = SL_X0 + (long)(SL_X1 - SL_X0) * (isHue ? hue * 100 / 359 : sat) / 100;
   tft.fillCircle(kx, y, 11, c565(isHue ? hsv(hue, 100, 100) : cur));
   tft.drawCircle(kx, y, 11, C_TEXT);
 }
@@ -439,154 +292,378 @@ int pctFromX(int x) {
 }
 
 void drawPct(int xRight, int y, int val, uint16_t col) {
-  char b[8];
-  snprintf(b, sizeof(b), "%d%%", val);
-  tft.setTextPadding(60);
-  text(b, xRight, y, 4, col, C_BG, MR_DATUM);
+  char b[8]; snprintf(b, 8, "%d%%", val);
+  tft.setTextPadding(52);
+  tft.setTextColor(col, C_BG);
+  tft.setTextDatum(MR_DATUM);
+  tft.drawString(b, xRight, y, 4);
   tft.setTextPadding(0);
 }
 
-// =====================================================
+// Small label badge (used for section headings)
+void label(const char* s, int x, int y) {
+  txt(s, x, y, 2, C_DIM, C_BG, TL_DATUM);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
 // HEADER
-// =====================================================
+// ═══════════════════════════════════════════════════════════════════════════════
 
 void drawHeader() {
   tft.fillRect(0, 0, W, HDR_H, C_HDR);
   tft.drawFastHLine(0, HDR_H - 1, W, C_BORDER);
 
-  // Left tap zone: "Exit" to close the gate when open
+  // "Exit" tap zone — only shown when gate is open
   if (gateState == GS_OPEN) {
-    tft.fillRect(0, 0, 72, HDR_H - 1, C_RED);
-    text("Exit", 36, HDR_H / 2, 2, C_ONACC, C_RED, MC_DATUM);
+    tft.fillRect(0, 0, 60, HDR_H - 1, C_RED);
+    txt("Exit", 30, HDR_H / 2, 2, C_WHITE, C_RED, MC_DATUM);
   }
 
-  text("Silvestre del Moro Park", 82, HDR_H / 2, 2, C_TEXT, C_HDR, ML_DATUM);
+  // Park name (centred between Exit and tab buttons)
+  txt("Silvestre del Moro", 90, HDR_H / 2, 2, C_TEXT, C_HDR, ML_DATUM);
 
-  bool a = (page == P_LIGHTS), b = (page == P_AUDIO);
-  tft.fillRect(250, 0, 105, HDR_H - 1, a ? C_AMBER : C_HDR);
-  text("Lights", 302, HDR_H / 2, 2, a ? C_ONACC : C_DIM, a ? C_AMBER : C_HDR, MC_DATUM);
-  tft.fillRect(355, 0, 105, HDR_H - 1, b ? C_GREEN : C_HDR);
-  text("Audio",  407, HDR_H / 2, 2, b ? C_ONACC : C_DIM, b ? C_GREEN : C_HDR, MC_DATUM);
+  // Page tabs
+  bool aL = (page == P_LIGHTS), aA = (page == P_AUDIO);
+  tft.fillRect(300, 0, 90, HDR_H - 1, aL ? C_AMBER  : C_HDR);
+  txt("Lights", 345, HDR_H / 2, 2, aL ? C_WHITE : C_DIM, aL ? C_AMBER : C_HDR, MC_DATUM);
+  tft.fillRect(390, 0, 90, HDR_H - 1, aA ? C_GREEN  : C_HDR);
+  txt("Audio",  435, HDR_H / 2, 2, aA ? C_WHITE : C_DIM, aA ? C_GREEN : C_HDR, MC_DATUM);
 
-  // SD card status dot
-  tft.fillCircle(472, HDR_H / 2, 5, sdOk ? C_GREEN : C_RED);
+  // WiFi / SD status dots (far right, top)
+  tft.fillCircle(474, 8,  4, WiFi.status() == WL_CONNECTED ? C_GREEN : C_RED);
+  tft.fillCircle(474, 22, 4, sdOk ? C_GREEN : C_RED);
 }
 
-// =====================================================
-// LIGHTS — BASIC
-// =====================================================
+// ═══════════════════════════════════════════════════════════════════════════════
+// GATE SCREEN
+// ═══════════════════════════════════════════════════════════════════════════════
 
-void drawBasic() {
-  card(10, 90, 460, 56, C_CARD, lightsOn ? C_AMBER : C_BORDER);
-  text("Lights", 24, 106, 4, C_TEXT, C_CARD, ML_DATUM);
-  text(lightsOn ? "On - steady warm" : "Off",
-       24, 132, 2, lightsOn ? C_AMBER : C_DIM, C_CARD, ML_DATUM);
-  toggleSwitch(414, 107, lightsOn, C_AMBER);
-  text("Brightness", 10, 170, 2, C_DIM, C_BG, ML_DATUM);
-  drawPct(W - 12, 178, brightness, C_AMBER);
-  drawSlider(215, brightness, C_AMBER);
-}
+void drawGateScreen() {
+  tft.fillScreen(C_BG);
+  tft.fillRect(0, 0, W, 4, C_GREEN);
 
-// =====================================================
-// LIGHTS — COLOR
-// =====================================================
+  txt("Silvestre del Moro Park", W / 2, 22, 2, C_DIM, C_BG, MC_DATUM);
 
-void drawColorHeader() {
-  tft.fillRect(10, 84, 460, 56, C_BG);
-  tft.fillRoundRect(10, 86, 52, 52, 8, c565(cur));
-  tft.drawRoundRect(10, 86, 52, 52, 8, C_TEXT);
-  char b[24];
-  snprintf(b, sizeof(b), "#%02X%02X%02X", cur.r, cur.g, cur.b);
-  text(b, 72, 88, 4, C_TEXT, C_BG);
-  snprintf(b, sizeof(b), "R %d  G %d  B %d", cur.r, cur.g, cur.b);
-  text(b, 72, 120, 2, C_DIM, C_BG);
-  button(340, 92, 130, 40, "Scan sensor", false, C_AMBER);
-}
+  // Icon circle  (centre 240, 120; r=48)
+  int cx = W / 2, cy = 110;
+  tft.fillCircle(cx, cy, 48, C_CARD);
+  tft.drawCircle(cx, cy, 48, C_GREEN);
+  tft.drawCircle(cx, cy, 44, C_BORDER);
 
-void drawApply() {
-  const char* n[4] = { "ALL", "Left", "Right", "Center" };
-  text("Apply color to", 10, 232, 2, C_DIM, C_BG, ML_DATUM);
-  for (int i = 0; i < 4; i++) {
-    int x = 10 + i * 118;
-    bool act = (lastApplied == i);
-    uint16_t f = act ? C_AMBER : C_CARD;
-    card(x, 254, 112, 52, f, act ? C_AMBER : C_BORDER);
-    RGB dc = (i == 0) ? cur : zone[i - 1];
-    tft.fillCircle(x + 16, 280, 8, c565(dc));
-    tft.drawCircle(x + 16, 280, 8, C_TEXT);
-    text(n[i], x + 66, 280, 2, act ? C_ONACC : C_TEXT, f, MC_DATUM);
+  switch (gateState) {
+    case GS_WAITING: {
+      // Fingerprint rings
+      for (int r : {20, 13, 6}) tft.drawCircle(cx, cy, r, C_GREEN);
+      tft.drawFastVLine(cx, cy - 20, 40, C_GREEN);
+      tft.drawFastHLine(cx - 20, cy, 40, C_GREEN);
+
+      txt("Hi! Welcome!", cx, 178, 4, C_TEXT, C_BG, MC_DATUM);
+      txt("Please scan your fingerprint to enter.", cx, 208, 2, C_DIM, C_BG, MC_DATUM);
+
+      // Scan button
+      card(cx - 120, 240, 240, 50, C_GREEN, C_GREEN);
+      txt("TAP HERE TO SCAN", cx, 265, 2, C_WHITE, C_GREEN, MC_DATUM);
+      break;
+    }
+    case GS_SCANNING: {
+      for (int r : {20, 13, 6}) tft.drawCircle(cx, cy, r, C_AMBER);
+      tft.drawFastVLine(cx, cy - 20, 40, C_AMBER);
+      tft.drawFastHLine(cx - 20, cy, 40, C_AMBER);
+
+      txt("Scanning...", cx, 178, 4, C_AMBER, C_BG, MC_DATUM);
+      txt("Verifying fingerprint, please wait...", cx, 208, 2, C_DIM, C_BG, MC_DATUM);
+
+      // Progress bar rail
+      tft.fillRoundRect(cx - 120, 240, 240, 12, 6, C_TRACK);
+      uint32_t elapsed = millis() - gateMs;
+      int fw = constrain((int)(240L * elapsed / SCAN_MS), 0, 240);
+      if (fw > 0) tft.fillRoundRect(cx - 120, 240, fw, 12, 6, C_GREEN);
+      break;
+    }
+    case GS_OPEN: {
+      // Open padlock: arc (top half of circle) + body
+      tft.drawArc(cx, cy - 6, 18, 12, 180, 360, C_GREEN, C_CARD);
+      tft.fillRoundRect(cx - 18, cy + 6, 36, 28, 4, C_GREEN);
+      tft.fillCircle(cx, cy + 17, 5, C_WHITE);
+
+      txt("Welcome!", cx, 178, 4, C_GREEN, C_BG, MC_DATUM);
+      txt("You may now interact with the diorama.", cx, 208, 2, C_DIM, C_BG, MC_DATUM);
+      break;
+    }
+    case GS_GOODBYE: {
+      // Closed padlock
+      tft.drawArc(cx, cy - 6, 18, 12, 0, 360, C_RED, C_CARD);
+      tft.fillRoundRect(cx - 18, cy + 6, 36, 28, 4, C_RED);
+      tft.fillCircle(cx, cy + 17, 5, C_WHITE);
+
+      txt("Goodbye!", cx, 178, 4, C_RED, C_BG, MC_DATUM);
+      txt("Thank you for visiting.", cx, 208, 2, C_DIM, C_BG, MC_DATUM);
+      break;
+    }
   }
 }
 
-void drawColorPanel() {
-  drawColorHeader();
-  drawGradSlider(HUE_Y, true);
-  drawGradSlider(SAT_Y, false);
-  for (int i = 0; i < 12; i++) {
-    int cx = 29 + i * 38;
-    tft.fillCircle(cx, 212, 13, c565(PAL[i]));
-    tft.drawCircle(cx, 212, 13, C_BORDER);
+void enterGateState(GateState s) {
+  gateState = s;
+  gateMs    = millis();
+
+  switch (s) {
+    case GS_WAITING:
+      Serial.println("[GATE] WAITING");
+      gateOpen = false;
+      lightsOn = false;
+      applyHardwareGate(false);
+      pushZones();
+      drawGateScreen();
+      break;
+
+    case GS_SCANNING:
+      Serial.println("[GATE] SCANNING");
+      drawGateScreen();
+      break;
+
+    case GS_OPEN:
+      Serial.println("[GATE] OPEN — UI unlocked");
+      gateOpen = true;
+      lightsOn = true;
+      applyHardwareGate(true);
+      pushZones();
+      drawGateScreen();
+      delay(1400);
+      drawHeader();
+      drawLights();
+      break;
+
+    case GS_GOODBYE:
+      Serial.println("[GATE] GOODBYE");
+      gateOpen = false;
+      lightsOn = false;
+      fountainOn = false;
+      applyHardwareGate(false);
+      pushZones();
+      drawGateScreen();
+      break;
   }
-  drawApply();
 }
 
-// =====================================================
-// LIGHTS — SOUND
-// =====================================================
-
-void drawLevel() {
-  int fw = (int)(lvl * 460);
-  if (fw > 0)    tft.fillRect(10,      170, fw,       26, c565(live));
-  if (fw < 460)  tft.fillRect(10 + fw, 170, 460 - fw, 26, C_TRACK);
+void pollGate() {
+  if (gateState == GS_SCANNING) {
+    // Animate the progress bar while waiting
+    uint32_t elapsed = millis() - gateMs;
+    if (elapsed >= SCAN_MS) {
+      enterGateState(GS_OPEN);
+    } else {
+      int cx = W / 2;
+      int fw = constrain((int)(240L * elapsed / SCAN_MS), 0, 240);
+      tft.fillRoundRect(cx - 120, 240, fw, 12, 6, C_GREEN);
+    }
+  } else if (gateState == GS_GOODBYE) {
+    if (millis() - gateMs >= GOODBYE_MS) enterGateState(GS_WAITING);
+  }
 }
 
-void drawSound() {
-  text("All RGB lights follow the sound", 10, 92, 2, C_TEXT, C_BG);
-  text("Play a track in Audio and watch them react.", 10, 114, 2, C_DIM, C_BG);
-  text("Level", 10, 148, 2, C_DIM, C_BG);
-  drawLevel();
-  text("Sensitivity", 10, 226, 2, C_DIM, C_BG, ML_DATUM);
-  drawPct(W - 12, 230, sens, C_AMBER);
-  drawSlider(262, sens, C_AMBER);
-}
-
-// =====================================================
-// LIGHTS — ADAPTIVE
-// =====================================================
-
-void drawAdaptSwatch() {
-  tft.fillRoundRect(10, 130, 460, 90, 8, c565(live));
-  tft.drawRoundRect(10, 130, 460, 90, 8, C_BORDER);
-}
-
-void drawAdapt() {
-  text("Follows the ambient color sensor", 10, 92, 2, C_TEXT, C_BG);
-  text("Lights update automatically.",     10, 112, 2, C_DIM,  C_BG);
-  drawAdaptSwatch();
-}
-
-// =====================================================
+// ═══════════════════════════════════════════════════════════════════════════════
 // LIGHTS PAGE
-// =====================================================
+// ═══════════════════════════════════════════════════════════════════════════════
+//
+//  Layout (480×284 body, y origin = HDR_H=36):
+//
+//  y  36..78  : Mode tabs  [ Basic ][ Sound ][ Adaptive ]  (3 tabs, 150×38 each)
+//  y  82..138 : Power card (on/off toggle + current mode label)
+//  y 142..162 : "Brightness" label + value
+//  y 163..199 : Brightness slider
+//  y 206..226 : Mode-specific label
+//  y 230..282 : Mode-specific content (level bar OR swatch)  / Sens slider
+//
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Mode tab row  (3 tabs: Basic, Sound, Adaptive — Colorful is web-only on TFT)
+// Tab layout: each 150 px wide, gap 5 px, start x=10
+// Total = 3×150 + 2×5 = 460 px  fits in 480
+void drawModeTabs() {
+  const char* labels[3] = { "Basic", "Sound", "Adaptive" };
+  const Mode  modes[3]  = { M_BASIC, M_SOUND, M_ADAPT };
+  for (int i = 0; i < 3; i++) {
+    bool act = (tftMode == modes[i]);
+    int  bx  = 10 + i * 157;
+    btn(bx, BODY_Y + 2, 150, 36, labels[i], act, C_AMBER);
+  }
+}
+
+// Power toggle card
+void drawPowerCard() {
+  int cy = BODY_Y + 44;
+  card(10, cy, 460, 52, C_CARD, lightsOn ? C_AMBER : C_BORDER);
+
+  // Icon circle
+  tft.fillCircle(40, cy + 26, 16, lightsOn ? C_AMBER : C_TRACK);
+  // Simple power symbol (circle + vertical line on top)
+  tft.drawCircle(40, cy + 26, 10, lightsOn ? C_WHITE : C_DIM);
+  tft.drawFastVLine(40, cy + 16, 10, lightsOn ? C_WHITE : C_DIM);
+
+  // Label
+  txt(lightsOn ? "Lights  ON" : "Lights  OFF",
+      68, cy + 14, 4, C_TEXT, C_CARD, TL_DATUM);
+  txt(lightMode.c_str(), 68, cy + 36, 2, C_DIM, C_CARD, TL_DATUM);
+
+  // Toggle switch
+  toggleSw(408, cy + 15, lightsOn, C_AMBER);
+}
+
+// Brightness row
+void drawBrightnessRow() {
+  int ly = BODY_Y + 108;
+  tft.fillRect(0, ly, W, 70, C_BG);
+  label("Brightness", SL_X0, ly);
+  drawPct(W - 10, ly + 4, brightness, C_AMBER);
+  drawSlider(ly + 36, brightness, C_AMBER);
+}
+
+// Mode-specific lower panel
+void drawModePanel() {
+  int py = BODY_Y + 184;
+  tft.fillRect(0, py, W, H - py, C_BG);
+
+  if (tftMode == M_BASIC) {
+    // Nothing extra — brightness slider is sufficient
+    label("Steady warm light. Adjust brightness above.", SL_X0, py + 4);
+    return;
+  }
+
+  if (tftMode == M_SOUND) {
+    label("Sound level", SL_X0, py);
+    // Level bar
+    int bw = (int)(lvl * (SL_X1 - SL_X0));
+    tft.fillRect(SL_X0, py + 18, SL_X1 - SL_X0, 20, C_TRACK);
+    if (bw > 0) tft.fillRect(SL_X0, py + 18, bw, 20, c565(live));
+    // Sensitivity slider
+    label("Sensitivity", SL_X0, py + 50);
+    drawPct(W - 10, py + 54, sens, C_AMBER);
+    drawSlider(py + 82, sens, C_AMBER);
+    return;
+  }
+
+  if (tftMode == M_ADAPT) {
+    label("Ambient colour sensor — auto-adapting", SL_X0, py + 4);
+    // Colour swatch
+    tft.fillRoundRect(SL_X0, py + 24, SL_X1 - SL_X0, 56, 8, c565(live));
+    tft.drawRoundRect(SL_X0, py + 24, SL_X1 - SL_X0, 56, 8, C_BORDER);
+    return;
+  }
+}
 
 void drawLights() {
-  tft.fillRect(0, HDR_H, W, H - HDR_H, C_BG);
-  const char* mn[4] = { "Basic", "Colorful", "Sound", "Adaptive" };
-  for (int i = 0; i < 4; i++)
-    button(10 + i * 118, 42, 112, 36, mn[i], mode == i, C_AMBER);
-  switch (mode) {
-    case M_BASIC: drawBasic();      break;
-    case M_COLOR: drawColorPanel(); break;
-    case M_SOUND: drawSound();      break;
-    case M_ADAPT: drawAdapt();      break;
-  }
+  tft.fillRect(0, BODY_Y, W, BODY_H, C_BG);
+  drawModeTabs();
+  drawPowerCard();
+  drawBrightnessRow();
+  drawModePanel();
 }
 
-// =====================================================
+// ═══════════════════════════════════════════════════════════════════════════════
 // AUDIO PAGE
-// =====================================================
+// ═══════════════════════════════════════════════════════════════════════════════
+//
+//  Layout (body y 36..319):
+//
+//  y  40..76  : Track title + counter
+//  y  80..96  : Playback status
+//  y 102..170 : Transport buttons  [  <<  ]  [ Play/Pause ]  [  >>  ]
+//  y 178..198 : "Volume" label + value
+//  y 202..240 : Volume slider
+//
+// ─────────────────────────────────────────────────────────────────────────────
 
-int volToAudio() { return map(volume, 0, 100, 0, 21); }
+void drawAudio() {
+  tft.fillRect(0, BODY_Y, W, BODY_H, C_BG);
+
+  // Track info
+  if (!sdOk) {
+    txt("SD card not found", W / 2, BODY_Y + 28, 4, C_RED, C_BG, MC_DATUM);
+  } else if (!trackCount) {
+    txt("No audio files on SD", W / 2, BODY_Y + 28, 4, C_AMBER, C_BG, MC_DATUM);
+  } else {
+    // Shorten filename: strip path and extension, truncate at 26 chars
+    char title[48];
+    strlcpy(title, trackPath[curTrack] + 1, sizeof(title));
+    char* dot = strrchr(title, '.'); if (dot) *dot = 0;
+    if (strlen(title) > 26) { title[24] = '.'; title[25] = '.'; title[26] = 0; }
+
+    tft.setTextPadding(460);
+    txt(title, W / 2, BODY_Y + 20, 4, C_TEXT, C_BG, MC_DATUM);
+    tft.setTextPadding(0);
+
+    char ctr[24];
+    snprintf(ctr, sizeof(ctr), "Track %d / %d", curTrack + 1, trackCount);
+    txt(ctr, W / 2, BODY_Y + 48, 2, C_DIM, C_BG, MC_DATUM);
+  }
+
+  // Playback status badge
+  const char* statusStr = audioPlaying ? "▶  Playing"
+                        : audioStarted ? "⏸  Paused"
+                        : "⏹  Stopped";
+  uint16_t statusCol = audioPlaying ? C_GREEN : C_DIM;
+  txt(statusStr, W / 2, BODY_Y + 70, 2, statusCol, C_BG, MC_DATUM);
+
+  // Transport buttons  (centred block)
+  //  [<<]   starts x=30,  w=110
+  //  [Play] starts x=185, w=110
+  //  [>>]   starts x=340, w=110
+  btn( 30, BODY_Y + 92, 110, 58, "<<",                   false,        C_GREEN);
+  btn(185, BODY_Y + 92, 110, 58, audioPlaying ? "Pause" : "Play",
+      audioPlaying, C_GREEN);
+  btn(340, BODY_Y + 92, 110, 58, ">>",                   false,        C_GREEN);
+
+  // Volume
+  label("Volume", SL_X0, BODY_Y + 162);
+  drawPct(W - 10, BODY_Y + 166, volume, C_GREEN);
+  drawSlider(BODY_Y + 200, volume, C_GREEN);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// SOUND SENSOR
+// ═══════════════════════════════════════════════════════════════════════════════
+
+float readMicLevel() {
+  int mn = 4095, mx = 0;
+  for (int i = 0; i < 80; i++) {
+    int v = analogRead(MIC_PIN);
+    if (v < mn) mn = v;
+    if (v > mx) mx = v;
+  }
+  int range = 2000 - 18 * sens;
+  if (range < 150) range = 150;
+  return constrain((mx - mn - 60) / (float)range, 0.f, 1.f);
+}
+
+void updateLive() {
+  static uint32_t last = 0;
+  if (millis() - last < 40) return;
+  last = millis();
+
+  if (lightMode == "Sound Reactive" && lightsOn) {
+    lvl     = max(readMicLevel(), lvl * 0.82f);
+    hueBase = (hueBase + 2) % 360;
+    live    = hsv((hueBase + (int)(lvl * 120)) % 360, 100, 12 + (int)(88 * lvl));
+    setAll(live);
+    // Refresh level bar if on lights page
+    if (page == P_LIGHTS && tftMode == M_SOUND) {
+      int py = BODY_Y + 184;
+      int bw = (int)(lvl * (SL_X1 - SL_X0));
+      tft.fillRect(SL_X0, py + 18, SL_X1 - SL_X0, 20, C_TRACK);
+      if (bw > 0) tft.fillRect(SL_X0, py + 18, bw, 20, c565(live));
+    }
+  }
+
+  // Colour Adaptive — stub (connect TCS34725 or similar)
+  // if (lightMode == "Color Adaptive") { ... }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// AUDIO HELPERS
+// ═══════════════════════════════════════════════════════════════════════════════
+
+int volToAudio(int v) { return map(v, 0, 100, 0, 21); }
 
 void scanTracks() {
   trackCount = 0;
@@ -598,17 +675,15 @@ void scanTracks() {
       String n = f.name();
       if (n.startsWith("/")) n.remove(0, 1);
       String l = n; l.toLowerCase();
-      if (n[0] != '.' &&
-          (l.endsWith(".mp3") || l.endsWith(".wav") ||
-           l.endsWith(".aac") || l.endsWith(".m4a") || l.endsWith(".flac"))) {
-        snprintf(trackPath[trackCount++], sizeof(trackPath[0]), "/%s", n.c_str());
+      if (n[0] != '.' && (l.endsWith(".mp3") || l.endsWith(".wav") ||
+                          l.endsWith(".aac") || l.endsWith(".m4a") || l.endsWith(".flac"))) {
+        snprintf(trackPath[trackCount++], 48, "/%s", n.c_str());
       }
     }
     f.close();
     f = root.openNextFile();
   }
   root.close();
-  // Sort alphabetically
   for (int i = 0; i < trackCount - 1; i++)
     for (int j = i + 1; j < trackCount; j++)
       if (strcasecmp(trackPath[i], trackPath[j]) > 0) {
@@ -624,55 +699,20 @@ void startTrack(int i) {
   audio.connecttoFS(SD, trackPath[i]);
   audioPlaying = audioStarted = true;
   trackStartMs = millis();
-  Serial.printf("[AUDIO] Playing Track %d/%d: %s\n", curTrack + 1, trackCount, trackPath[i]);
+  Serial.printf("[AUDIO] Playing %d/%d: %s\n", curTrack + 1, trackCount, trackPath[i]);
 }
 
 void togglePlay() {
   if (!trackCount) return;
-  if (!audioStarted) startTrack(curTrack);
-  else {
-    audio.pauseResume();
-    audioPlaying = !audioPlaying;
-    Serial.printf("[AUDIO] Playback state: %s (Track: %s)\n", audioPlaying ? "PLAYING" : "PAUSED", trackPath[curTrack]);
-  }
+  if (!audioStarted) { startTrack(curTrack); return; }
+  audio.pauseResume();
+  audioPlaying = !audioPlaying;
 }
 
 void stepTrack(int d) {
   if (!trackCount) return;
   int n = (curTrack + d + trackCount) % trackCount;
-  Serial.printf("[AUDIO] Track changed: %s -> %s\n", trackPath[curTrack], trackPath[n]);
   if (audioStarted) startTrack(n); else curTrack = n;
-}
-
-void trackTitle(char* out, size_t n) {
-  strlcpy(out, trackPath[curTrack] + 1, n);
-  char* d = strrchr(out, '.');
-  if (d) *d = 0;
-  if (strlen(out) > 26) { out[24] = '.'; out[25] = '.'; out[26] = 0; }
-}
-
-void drawAudio() {
-  tft.fillRect(0, HDR_H, W, H - HDR_H, C_BG);
-  char t[48], c[24];
-  if (!sdOk)
-    text("SD card not found",    W / 2, 62, 4, C_RED,   C_BG, MC_DATUM);
-  else if (!trackCount)
-    text("No audio files on SD", W / 2, 62, 4, C_AMBER, C_BG, MC_DATUM);
-  else {
-    trackTitle(t, sizeof(t));
-    text(t, W / 2, 62, 4, C_TEXT, C_BG, MC_DATUM);
-    snprintf(c, sizeof(c), "Track %d / %d", curTrack + 1, trackCount);
-    text(c, W / 2, 90, 2, C_DIM, C_BG, MC_DATUM);
-  }
-  text(audioPlaying ? "Playing" : (audioStarted ? "Paused" : "Stopped"),
-       W / 2, 112, 2,
-       audioPlaying ? C_GREEN : C_DIM, C_BG, MC_DATUM);
-  button( 70, 134, 100, 64, "<<",                  false,        C_GREEN);
-  button(190, 134, 100, 64, audioPlaying ? "Pause" : "Play", audioPlaying, C_GREEN);
-  button(310, 134, 100, 64, ">>",                  false,        C_GREEN);
-  text("Volume", 10, 222, 2, C_DIM, C_BG, ML_DATUM);
-  drawPct(W - 12, 226, volume, C_GREEN);
-  drawSlider(262, volume, C_GREEN);
 }
 
 void autoAdvance() {
@@ -683,174 +723,97 @@ void autoAdvance() {
   }
 }
 
-// =====================================================
-// SOUND SENSOR
-// =====================================================
-
-float readLevel() {
-  int mn = 4095, mx = 0;
-  for (int i = 0; i < 80; i++) {
-    int v = analogRead(MIC_PIN);
-    if (v < mn) mn = v;
-    if (v > mx) mx = v;
-  }
-  int range = 2000 - 18 * sens;
-  if (range < 150) range = 150;
-  return constrain((mx - mn - 60) / (float)range, 0.f, 1.f);
-}
-
-void updateLive() {
-  static uint32_t last = 0, lastA = 0;
-  if (millis() - last < 40) return;
-  last = millis();
-
-  if (mode == M_SOUND && lightsOn) {
-    lvl     = max(readLevel(), lvl * 0.82f);
-    hueBase = (hueBase + 2) % 360;
-    live    = hsv((hueBase + (int)(lvl * 120)) % 360, 100, 12 + (int)(88 * lvl));
-    setAll(live);
-    if (page == P_LIGHTS) drawLevel();
-
-  } else if (mode == M_ADAPT && millis() - lastA > 500) {
-    lastA = millis();
-    RGB c;
-    if (readColorSensor(&c)) {
-      live = c;
-      setAll(c);
-      if (page == P_LIGHTS) drawAdaptSwatch();
-    }
-  }
-}
-
-// =====================================================
-// MODE / APPLY
-// =====================================================
-
-void setMode(Mode m) {
-  mode     = m;
-  lightsOn = true;
-  const char* mn[4] = { "Basic", "Colorful", "Sound", "Adaptive" };
-  Serial.printf("[UI] Light Mode changed to: %s\n", mn[m]);
-  if (m == M_BASIC) setAll({255, 180, 90});
-  else pushZones();
-}
-
-void applyColor(int i) {
-  if (i == 0) zone[0] = zone[1] = zone[2] = cur;
-  else zone[i - 1] = cur;
-  lastApplied = i;
-  lightsOn    = true;
-  const char* n[4] = { "ALL", "Left", "Right", "Center" };
-  Serial.printf("[COLOR] Color #%02X%02X%02X applied to Zone: %s\n", cur.r, cur.g, cur.b, n[i]);
-  pushZones();
-  drawApply();
-}
-
-// =====================================================
-// TOUCH
-// =====================================================
+// ═══════════════════════════════════════════════════════════════════════════════
+// TOUCH — onPress & onDrag
+// ═══════════════════════════════════════════════════════════════════════════════
 
 void onPress(int x, int y) {
-  // ── Gate screen intercept ─────────────────────────────────────────────────
-  // When gate is not open, all touches are handled by the gate screen.
+  // ── Gate screen ──────────────────────────────────────────────────────────
   if (gateState != GS_OPEN) {
-    if (gateState == GS_WAITING) {
-      // User tapped the "TAP HERE TO SCAN" button
-      if (inRect(x, y, W / 2 - 110, 260, 220, 46)) {
-        Serial.println("[GATE] Touch: Biometric scan triggered.");
-        enterGateState(GS_SCANNING);
-      }
+    if (gateState == GS_WAITING && inRect(x, y, W/2 - 120, 240, 240, 50)) {
+      enterGateState(GS_SCANNING);
     }
-    // All other touches ignored while gate is closed/scanning/goodbye
     return;
   }
 
-  // ── Close gate: long-press anywhere on header (left 80 px) ───────────────
-  // A dedicated "Exit" tap zone at the far left of the header lets the
-  // physical operator close the gate from the TFT.
-  if (y < HDR_H && x < 80) {
-    Serial.println("[GATE] Touch: Close gate requested from TFT.");
-    enterGateState(GS_GOODBYE);
-    // Transition to waiting handled by pollGate() after GOODBYE_DURATION_MS
-    return;
-  }
-
-  // ── Normal page handling (gate is open) ──────────────────────────────────
-
-  // Header: page tabs
+  // ── Header taps ──────────────────────────────────────────────────────────
   if (y < HDR_H) {
-    Page np = (x >= 355) ? P_AUDIO : (x >= 250 ? P_LIGHTS : page);
-    if (np != page) {
-      page = np;
-      Serial.printf("[UI] Page switched: %s\n", page == P_LIGHTS ? "LIGHTS" : "AUDIO");
-      drawHeader();
-      if (page == P_LIGHTS) drawLights(); else drawAudio();
+    // Exit tap zone (left 60 px)
+    if (x < 60) {
+      enterGateState(GS_GOODBYE);
+      return;
+    }
+    // Page tabs
+    if (inRect(x, y, 300, 0, 90, HDR_H)) {
+      if (page != P_LIGHTS) { page = P_LIGHTS; drawHeader(); drawLights(); }
+      return;
+    }
+    if (inRect(x, y, 390, 0, 90, HDR_H)) {
+      if (page != P_AUDIO) { page = P_AUDIO; drawHeader(); drawAudio(); }
+      return;
     }
     return;
   }
 
-  // Audio page
+  // ── Audio page ────────────────────────────────────────────────────────────
   if (page == P_AUDIO) {
-    if      (inRect(x, y, 190, 134, 100, 64)) { togglePlay(); drawAudio(); }
-    else if (inRect(x, y,  70, 134, 100, 64)) { stepTrack(-1); drawAudio(); }
-    else if (inRect(x, y, 310, 134, 100, 64)) { stepTrack(1);  drawAudio(); }
-    else if (y > 240 && y < 288)              { dragging = D_VOL; }
-    if (dragging) onDrag(x);
+    // <<
+    if (inRect(x, y, 30,  BODY_Y + 92, 110, 58)) { stepTrack(-1); drawAudio(); return; }
+    // Play/Pause
+    if (inRect(x, y, 185, BODY_Y + 92, 110, 58)) { togglePlay();  drawAudio(); return; }
+    // >>
+    if (inRect(x, y, 340, BODY_Y + 92, 110, 58)) { stepTrack(1);  drawAudio(); return; }
+    // Volume slider zone
+    if (inRect(x, y, SL_X0, BODY_Y + 182, SL_X1 - SL_X0, 40)) {
+      dragging = D_VOL; onDrag(x);
+    }
     return;
   }
 
-  // Lights page — mode tabs
-  for (int i = 0; i < 4; i++)
-    if (inRect(x, y, 10 + i * 118, 42, 112, 36)) {
-      setMode((Mode)i); drawLights(); return;
-    }
-
-  if (mode == M_BASIC) {
-    if (inRect(x, y, 10, 90, 460, 56)) {
-      lightsOn = !lightsOn;
-      Serial.printf("[LIGHTS] Power toggled: %s\n", lightsOn ? "ON" : "OFF");
-      pushZones();
-      drawLights();
-    }
-    else if (y > 193 && y < 238) { dragging = D_BR; }
-  }
-  else if (mode == M_COLOR) {
-    if (inRect(x, y, 340, 92, 130, 40)) {
-      Serial.println("[COLOR] Scan sensor button pressed");
-      RGB c;
-      if (readColorSensor(&c)) {
-        cur = c; rgbToHs(c, hue, sat);
-        Serial.printf("[COLOR] Sensor read RGB: #%02X%02X%02X\n", cur.r, cur.g, cur.b);
-        drawColorPanel();
-      } else {
-        Serial.println("[COLOR] Sensor read failed: No sensor found");
-        text("No sensor found", 72, 120, 2, C_RED, C_BG);
+  // ── Lights page ───────────────────────────────────────────────────────────
+  if (page == P_LIGHTS) {
+    // Mode tabs row  y = BODY_Y+2 .. BODY_Y+38
+    if (inRect(x, y, 0, BODY_Y, W, 40)) {
+      const Mode modes[3] = { M_BASIC, M_SOUND, M_ADAPT };
+      for (int i = 0; i < 3; i++) {
+        if (inRect(x, y, 10 + i * 157, BODY_Y + 2, 150, 36)) {
+          if (tftMode != modes[i]) {
+            tftMode = modes[i];
+            // Sync lightMode string with web app
+            if (tftMode == M_BASIC)  lightMode = "Basic";
+            if (tftMode == M_SOUND)  lightMode = "Sound Reactive";
+            if (tftMode == M_ADAPT)  lightMode = "Color Adaptive";
+            Serial.printf("[MODE] %s\n", lightMode.c_str());
+            if (tftMode == M_BASIC) setAll({255, 180, 90});
+            drawLights();
+          }
+          return;
+        }
       }
     }
-    else if (y > 137 && y < 164) { dragging = D_HUE; }
-    else if (y > 166 && y < 194) { dragging = D_SAT; }
-    else if (y > 196 && y < 228) {
-      for (int i = 0; i < 12; i++)
-        if (abs(x - (29 + i * 38)) <= 19) {
-          cur = PAL[i]; rgbToHs(cur, hue, sat);
-          Serial.printf("[COLOR] Preset color selected: #%02X%02X%02X (Hue: %d, Sat: %d%%)\n", cur.r, cur.g, cur.b, hue, sat);
-          drawColorHeader();
-          drawGradSlider(HUE_Y, true);
-          drawGradSlider(SAT_Y, false);
-          drawApply();
-          break;
-        }
-    }
-    else if (y >= 254 && y < 306) {
-      for (int i = 0; i < 4; i++)
-        if (inRect(x, y, 10 + i * 118, 254, 112, 52)) { applyColor(i); break; }
-    }
-  }
-  else if (mode == M_SOUND) {
-    if (y > 240 && y < 288) dragging = D_SENS;
-  }
 
-  if (dragging) onDrag(x);
+    // Power toggle card  y = BODY_Y+44 .. BODY_Y+96
+    if (inRect(x, y, 10, BODY_Y + 44, 460, 52)) {
+      lightsOn = !lightsOn;
+      Serial.printf("[LIGHTS] %s\n", lightsOn ? "ON" : "OFF");
+      pushZones();
+      drawPowerCard();
+      return;
+    }
+
+    // Brightness slider zone  y = BODY_Y+145 .. BODY_Y+185
+    if (inRect(x, y, SL_X0, BODY_Y + 126, SL_X1 - SL_X0, 56)) {
+      dragging = D_BR; onDrag(x); return;
+    }
+
+    // Sensitivity slider (Sound mode only)
+    if (tftMode == M_SOUND) {
+      int py = BODY_Y + 184;
+      if (inRect(x, y, SL_X0, py + 62, SL_X1 - SL_X0, 56)) {
+        dragging = D_SENS; onDrag(x); return;
+      }
+    }
+  }
 }
 
 void onDrag(int x) {
@@ -859,48 +822,33 @@ void onDrag(int x) {
     case D_BR:
       if (p != brightness) {
         brightness = p;
-        Serial.printf("[LIGHTS] Brightness changed: %d%%\n", brightness);
-        drawPct(W - 12, 178, p, C_AMBER);
-        drawSlider(215, p, C_AMBER);
+        Serial.printf("[LIGHTS] Brightness %d%%\n", brightness);
+        drawPct(W - 10, BODY_Y + 112, p, C_AMBER);
+        drawSlider(BODY_Y + 144, p, C_AMBER);
         pushZones();
       }
       break;
-    case D_HUE: {
-      int h = p * 359 / 100;
-      if (h != hue) {
-        hue = h; cur = hsv(hue, sat, 100);
-        Serial.printf("[COLOR] Hue changed: %d° -> RGB #%02X%02X%02X\n", hue, cur.r, cur.g, cur.b);
-        drawGradSlider(HUE_Y, true);
-        drawGradSlider(SAT_Y, false);
-        drawColorHeader();
-      }
-      break;
-    }
-    case D_SAT:
-      if (p != sat) {
-        sat = p; cur = hsv(hue, sat, 100);
-        Serial.printf("[COLOR] Saturation changed: %d%% -> RGB #%02X%02X%02X\n", sat, cur.r, cur.g, cur.b);
-        drawGradSlider(SAT_Y, false);
-        drawColorHeader();
-      }
-      break;
+
     case D_SENS:
       if (p != sens) {
         sens = p;
-        Serial.printf("[SOUND] Sensitivity changed: %d%%\n", sens);
-        drawPct(W - 12, 230, p, C_AMBER);
-        drawSlider(262, p, C_AMBER);
+        Serial.printf("[SOUND] Sensitivity %d%%\n", sens);
+        int py = BODY_Y + 184;
+        drawPct(W - 10, py + 54, p, C_AMBER);
+        drawSlider(py + 82, p, C_AMBER);
       }
       break;
+
     case D_VOL:
       if (p != volume) {
         volume = p;
-        Serial.printf("[AUDIO] Volume changed: %d%%\n", volume);
-        drawPct(W - 12, 226, p, C_GREEN);
-        drawSlider(262, p, C_GREEN);
-        audio.setVolume(volToAudio());
+        Serial.printf("[AUDIO] Volume %d%%\n", volume);
+        drawPct(W - 10, BODY_Y + 166, p, C_GREEN);
+        drawSlider(BODY_Y + 200, p, C_GREEN);
+        audio.setVolume(volToAudio(p));
       }
       break;
+
     default: break;
   }
 }
@@ -914,124 +862,424 @@ void pollTouch() {
     else if (dragging) onDrag(x);
   } else if (wasTouched && ++miss >= 3) {
     wasTouched = false; miss = 0;
-    if (dragging == D_HUE || dragging == D_SAT) drawApply();
     dragging = D_NONE;
   }
 }
 
-// =====================================================
-// TOUCH CALIBRATION  (SPIFFS-backed; set REPEAT_CAL true to redo)
-// =====================================================
+// ═══════════════════════════════════════════════════════════════════════════════
+// HTTP SERVER — endpoint handlers
+// All endpoints match the web app's esp32Api.js exactly.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// Helper: send JSON OK
+void jsonOk(const char* extra = "") {
+  char buf[128];
+  if (strlen(extra) == 0)
+    snprintf(buf, sizeof(buf), "{\"ok\":true}");
+  else
+    snprintf(buf, sizeof(buf), "{\"ok\":true,%s}", extra);
+  server.send(200, "application/json", buf);
+}
+
+// ── GET /api/light?state=on|off&brightness=0-100 ─────────────────────────────
+void handleLight() {
+  if (server.hasArg("state")) {
+    lightsOn = (server.arg("state") == "on");
+  }
+  if (server.hasArg("brightness")) {
+    brightness = constrain(server.arg("brightness").toInt(), 0, 100);
+  }
+  Serial.printf("[HTTP /api/light] state=%s brightness=%d\n",
+                lightsOn ? "on" : "off", brightness);
+  pushZones();
+  if (page == P_LIGHTS && gateState == GS_OPEN) {
+    drawPowerCard();
+    drawBrightnessRow();
+  }
+  jsonOk();
+}
+
+// ── GET /api/mode?mode=Basic|Sound+Reactive|Color+Adaptive|Colorful ──────────
+void handleMode() {
+  if (server.hasArg("mode")) {
+    lightMode = server.arg("mode");
+    lightMode.replace("+", " ");  // URL-encoded spaces
+    Serial.printf("[HTTP /api/mode] mode=%s\n", lightMode.c_str());
+    // Sync TFT mode tab
+    if (lightMode == "Basic")         tftMode = M_BASIC;
+    else if (lightMode == "Sound Reactive")  tftMode = M_SOUND;
+    else if (lightMode == "Color Adaptive")  tftMode = M_ADAPT;
+    else                              tftMode = M_BASIC; // Colorful → show Basic on TFT
+    if (tftMode == M_BASIC) setAll({255, 180, 90});
+    if (page == P_LIGHTS && gateState == GS_OPEN) drawLights();
+  }
+  jsonOk();
+}
+
+// ── GET /api/color?r=&g=&b=&target=left|right|center|all ────────────────────
+void handleColor() {
+  uint8_t r = server.hasArg("r") ? constrain(server.arg("r").toInt(), 0, 255) : 255;
+  uint8_t g = server.hasArg("g") ? constrain(server.arg("g").toInt(), 0, 255) : 180;
+  uint8_t b = server.hasArg("b") ? constrain(server.arg("b").toInt(), 0, 255) : 90;
+  String  target = server.hasArg("target") ? server.arg("target") : "all";
+
+  Serial.printf("[HTTP /api/color] r=%d g=%d b=%d target=%s\n", r, g, b, target.c_str());
+
+  RGB col = {r, g, b};
+  if      (target == "left")   zone[0] = col;
+  else if (target == "right")  zone[1] = col;
+  else if (target == "center") zone[2] = col;
+  else                         zone[0] = zone[1] = zone[2] = col;
+
+  pushZones();
+  jsonOk();
+}
+
+// ── GET /api/fountain?state=on|off&strength=0-100&auxStrength=0-100 ──────────
+void handleFountain() {
+  if (server.hasArg("state"))       fountainOn  = (server.arg("state") == "on");
+  if (server.hasArg("strength"))    fountainStr = constrain(server.arg("strength").toInt(), 0, 100);
+  if (server.hasArg("auxStrength")) fountainAux = constrain(server.arg("auxStrength").toInt(), 0, 100);
+
+  Serial.printf("[HTTP /api/fountain] state=%s str=%d aux=%d\n",
+                fountainOn ? "on" : "off", fountainStr, fountainAux);
+
+  // Fountain GPIO — shared with SD MISO; only enable if SD is not active
+  // analogWrite(FOUNTAIN_PIN, fountainOn ? map(fountainStr, 0, 100, 0, 255) : 0);
+  jsonOk();
+}
+
+// ── GET /api/gate?state=open|closed ─────────────────────────────────────────
+void handleGate() {
+  bool wantOpen = server.hasArg("state") && server.arg("state") == "open";
+  Serial.printf("[HTTP /api/gate] state=%s\n", wantOpen ? "open" : "closed");
+
+  if (wantOpen && !gateOpen) {
+    enterGateState(GS_OPEN);
+  } else if (!wantOpen && gateOpen) {
+    enterGateState(GS_GOODBYE);
+  }
+  jsonOk();
+}
+
+// ── GET /api/gate/status  → {"open":true|false} ──────────────────────────────
+void handleGateStatus() {
+  char buf[32];
+  snprintf(buf, sizeof(buf), "{\"open\":%s}", gateOpen ? "true" : "false");
+  server.send(200, "application/json", buf);
+}
+
+// ── GET /api/audio/play?file=xxx.mp3 ─────────────────────────────────────────
+void handleAudioPlay() {
+  if (!server.hasArg("file")) { server.send(400, "application/json", "{\"error\":\"missing file\"}"); return; }
+  String file = "/" + server.arg("file");
+  if (!file.startsWith("/")) file = "/" + file;
+
+  Serial.printf("[HTTP /api/audio/play] file=%s\n", file.c_str());
+  // Find track index matching filename
+  for (int i = 0; i < trackCount; i++) {
+    if (String(trackPath[i]) == file || String(trackPath[i]) == server.arg("file")) {
+      startTrack(i);
+      if (page == P_AUDIO && gateState == GS_OPEN) drawAudio();
+      jsonOk();
+      return;
+    }
+  }
+  // File not in list — play directly
+  audio.connecttoFS(SD, file.c_str());
+  audioPlaying = audioStarted = true;
+  trackStartMs = millis();
+  if (page == P_AUDIO && gateState == GS_OPEN) drawAudio();
+  jsonOk();
+}
+
+// ── GET /api/audio/pause ─────────────────────────────────────────────────────
+void handleAudioPause() {
+  Serial.println("[HTTP /api/audio/pause]");
+  if (audioStarted && audioPlaying) {
+    audio.pauseResume();
+    audioPlaying = false;
+    if (page == P_AUDIO && gateState == GS_OPEN) drawAudio();
+  }
+  jsonOk();
+}
+
+// ── GET /api/audio/stop ──────────────────────────────────────────────────────
+void handleAudioStop() {
+  Serial.println("[HTTP /api/audio/stop]");
+  audio.stopSong();
+  audioPlaying = audioStarted = false;
+  if (page == P_AUDIO && gateState == GS_OPEN) drawAudio();
+  jsonOk();
+}
+
+// ── GET /api/audio/volume?volume=0-100 ───────────────────────────────────────
+void handleAudioVolume() {
+  if (server.hasArg("volume")) {
+    volume = constrain(server.arg("volume").toInt(), 0, 100);
+    audio.setVolume(volToAudio(volume));
+    Serial.printf("[HTTP /api/audio/volume] volume=%d\n", volume);
+    if (page == P_AUDIO && gateState == GS_OPEN) {
+      drawPct(W - 10, BODY_Y + 166, volume, C_GREEN);
+      drawSlider(BODY_Y + 200, volume, C_GREEN);
+    }
+  }
+  jsonOk();
+}
+
+// ── GET /api/audio/files  → {"files":["001.mp3",...]} ────────────────────────
+void handleAudioFiles() {
+  String json = "{\"files\":[";
+  for (int i = 0; i < trackCount; i++) {
+    if (i) json += ",";
+    // Return filename without leading slash
+    String p = String(trackPath[i]);
+    if (p.startsWith("/")) p.remove(0, 1);
+    json += "\"" + p + "\"";
+  }
+  json += "]}";
+  server.send(200, "application/json", json);
+}
+
+// ── GET /api/sound-reactive?state=on|off&intensity=0-100 ─────────────────────
+void handleSoundReactive() {
+  if (server.hasArg("state"))     soundReactive   = (server.arg("state") == "on");
+  if (server.hasArg("intensity")) soundIntensity  = constrain(server.arg("intensity").toInt(), 0, 100);
+  Serial.printf("[HTTP /api/sound-reactive] state=%s intensity=%d\n",
+                soundReactive ? "on" : "off", soundIntensity);
+  if (soundReactive) {
+    lightMode = "Sound Reactive";
+    tftMode   = M_SOUND;
+    if (page == P_LIGHTS && gateState == GS_OPEN) drawLights();
+  }
+  jsonOk();
+}
+
+// ── GET /api/sound  → {"detected":bool,"level":0-1023} ───────────────────────
+void handleSound() {
+  // Take a quick ADC sample
+  int mn = 4095, mx = 0;
+  for (int i = 0; i < 20; i++) { int v = analogRead(MIC_PIN); if (v < mn) mn = v; if (v > mx) mx = v; }
+  int level = mx - mn;
+  bool detected = level > 80;
+  char buf[64];
+  snprintf(buf, sizeof(buf), "{\"detected\":%s,\"level\":%d}", detected ? "true" : "false", level);
+  server.send(200, "application/json", buf);
+}
+
+// ── GET /api/color-sensor ─────────────────────────────────────────────────────
+void handleColorSensor() {
+  // Stub — replace with real TCS34725 read when wired
+  server.send(404, "application/json", "{\"error\":\"no sensor\"}");
+}
+
+// ── GET /api/state  → full diorama state snapshot ────────────────────────────
+// The web app polls this every few seconds to sync changes made on the TFT.
+void handleState() {
+  // Build zone colour hex strings
+  char leftHex[8], rightHex[8], centerHex[8];
+  snprintf(leftHex,   sizeof(leftHex),   "#%02X%02X%02X", zone[0].r, zone[0].g, zone[0].b);
+  snprintf(rightHex,  sizeof(rightHex),  "#%02X%02X%02X", zone[1].r, zone[1].g, zone[1].b);
+  snprintf(centerHex, sizeof(centerHex), "#%02X%02X%02X", zone[2].r, zone[2].g, zone[2].b);
+
+  // Current track name (strip leading slash and extension)
+  char trackName[48] = "";
+  if (trackCount > 0) {
+    strlcpy(trackName, trackPath[curTrack] + 1, sizeof(trackName));
+    char* dot = strrchr(trackName, '.'); if (dot) *dot = 0;
+  }
+
+  StaticJsonDocument<512> doc;
+  doc["gateOpen"]        = gateOpen;
+  doc["lightsOn"]        = lightsOn;
+  doc["brightness"]      = brightness;
+  doc["lightingMode"]    = lightMode;
+  doc["soundReactive"]   = soundReactive;
+  doc["soundIntensity"]  = soundIntensity;
+  doc["fountainOn"]      = fountainOn;
+  doc["fountainStr"]     = fountainStr;
+  doc["fountainAux"]     = fountainAux;
+  doc["volume"]          = volume;
+  doc["audioPlaying"]    = audioPlaying;
+  doc["audioTrack"]      = (trackCount > 0) ? trackName : "";
+  doc["fountainColor"]   = leftHex;
+  doc["fountainAuxColor"]= rightHex;
+  doc["circleColor"]     = centerHex;
+
+  String json;
+  serializeJson(doc, json);
+  server.send(200, "application/json", json);
+}
+
+// ── CORS preflight (OPTIONS) ──────────────────────────────────────────────────
+void handleOptions() {
+  server.sendHeader("Access-Control-Allow-Origin", "*");
+  server.sendHeader("Access-Control-Allow-Methods", "GET,OPTIONS");
+  server.sendHeader("Access-Control-Allow-Headers", "Content-Type");
+  server.send(204);
+}
+
+// ── Attach CORS headers to every response ────────────────────────────────────
+void addCORSHeaders() {
+  server.sendHeader("Access-Control-Allow-Origin",  "*");
+  server.sendHeader("Access-Control-Allow-Methods", "GET,OPTIONS");
+  server.sendHeader("Access-Control-Allow-Headers", "Content-Type");
+}
+
+void setupRoutes() {
+  // CORS preflight
+  server.on("/api/light",            HTTP_OPTIONS, handleOptions);
+  server.on("/api/mode",             HTTP_OPTIONS, handleOptions);
+  server.on("/api/color",            HTTP_OPTIONS, handleOptions);
+  server.on("/api/fountain",         HTTP_OPTIONS, handleOptions);
+  server.on("/api/gate",             HTTP_OPTIONS, handleOptions);
+  server.on("/api/gate/status",      HTTP_OPTIONS, handleOptions);
+  server.on("/api/audio/play",       HTTP_OPTIONS, handleOptions);
+  server.on("/api/audio/pause",      HTTP_OPTIONS, handleOptions);
+  server.on("/api/audio/stop",       HTTP_OPTIONS, handleOptions);
+  server.on("/api/audio/volume",     HTTP_OPTIONS, handleOptions);
+  server.on("/api/audio/files",      HTTP_OPTIONS, handleOptions);
+  server.on("/api/sound-reactive",   HTTP_OPTIONS, handleOptions);
+  server.on("/api/sound",            HTTP_OPTIONS, handleOptions);
+  server.on("/api/color-sensor",     HTTP_OPTIONS, handleOptions);
+  server.on("/api/state",            HTTP_OPTIONS, handleOptions);
+
+  // GET handlers (wrap with CORS header injection)
+  server.on("/api/light",  HTTP_GET, []() { addCORSHeaders(); handleLight();        });
+  server.on("/api/mode",   HTTP_GET, []() { addCORSHeaders(); handleMode();         });
+  server.on("/api/color",  HTTP_GET, []() { addCORSHeaders(); handleColor();        });
+  server.on("/api/fountain",HTTP_GET,[]() { addCORSHeaders(); handleFountain();     });
+  server.on("/api/gate",   HTTP_GET, []() { addCORSHeaders(); handleGate();         });
+  server.on("/api/gate/status", HTTP_GET, []() { addCORSHeaders(); handleGateStatus(); });
+  server.on("/api/audio/play",  HTTP_GET, []() { addCORSHeaders(); handleAudioPlay();  });
+  server.on("/api/audio/pause", HTTP_GET, []() { addCORSHeaders(); handleAudioPause(); });
+  server.on("/api/audio/stop",  HTTP_GET, []() { addCORSHeaders(); handleAudioStop();  });
+  server.on("/api/audio/volume",HTTP_GET, []() { addCORSHeaders(); handleAudioVolume();});
+  server.on("/api/audio/files", HTTP_GET, []() { addCORSHeaders(); handleAudioFiles(); });
+  server.on("/api/sound-reactive",HTTP_GET,[]() { addCORSHeaders(); handleSoundReactive(); });
+  server.on("/api/sound",  HTTP_GET, []() { addCORSHeaders(); handleSound();        });
+  server.on("/api/color-sensor",HTTP_GET,[]() { addCORSHeaders(); handleColorSensor(); });
+  server.on("/api/state",      HTTP_GET,[]() { addCORSHeaders(); handleState();       });
+
+  server.onNotFound([]() {
+    addCORSHeaders();
+    server.send(404, "application/json", "{\"error\":\"not found\"}");
+  });
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// TOUCH CALIBRATION
+// ═══════════════════════════════════════════════════════════════════════════════
 
 void setupTouch() {
   uint16_t calData[5];
-  uint8_t  calDataOK = 0;
+  uint8_t  calOK = 0;
 
-  // Mount SPIFFS, format if needed
-  if (!SPIFFS.begin()) {
-    Serial.println("Formatting SPIFFS...");
-    SPIFFS.format();
-    SPIFFS.begin();
+  if (!SPIFFS.begin()) { SPIFFS.format(); SPIFFS.begin(); }
+
+  if (SPIFFS.exists(CALIBRATION_FILE) && !REPEAT_CAL) {
+    File f = SPIFFS.open(CALIBRATION_FILE, "r");
+    if (f) { if (f.readBytes((char*)calData, 14) == 14) calOK = 1; f.close(); }
   }
 
-  if (SPIFFS.exists(CALIBRATION_FILE)) {
-    if (REPEAT_CAL) {
-      SPIFFS.remove(CALIBRATION_FILE);   // force redo
-    } else {
-      File f = SPIFFS.open(CALIBRATION_FILE, "r");
-      if (f) {
-        if (f.readBytes((char *)calData, 14) == 14) calDataOK = 1;
-        f.close();
-      }
-    }
-  }
-
-  if (calDataOK && !REPEAT_CAL) {
+  if (calOK) {
     tft.setTouch(calData);
   } else {
-    // Run on-screen calibration wizard
     tft.fillScreen(TFT_BLACK);
-    tft.setCursor(20, 0);
-    tft.setTextFont(2);
-    tft.setTextSize(1);
     tft.setTextColor(TFT_WHITE, TFT_BLACK);
+    tft.setTextFont(2);
     tft.println("Touch corners as indicated");
-    tft.setTextFont(1);
-    tft.println();
-    if (REPEAT_CAL) {
-      tft.setTextColor(TFT_RED, TFT_BLACK);
-      tft.println("Set REPEAT_CAL to false to stop this running again!");
-    }
     tft.calibrateTouch(calData, TFT_MAGENTA, TFT_BLACK, 15);
-    tft.setTextColor(TFT_GREEN, TFT_BLACK);
-    tft.println("Calibration complete!");
-
-    // Persist to SPIFFS
     File f = SPIFFS.open(CALIBRATION_FILE, "w");
-    if (f) {
-      f.write((const unsigned char *)calData, 14);
-      f.close();
-    }
+    if (f) { f.write((const unsigned char*)calData, 14); f.close(); }
     tft.setTouch(calData);
   }
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// AUDIO TASK  (runs on core 0 so TFT redraws on core 1 never stutter)
+// ═══════════════════════════════════════════════════════════════════════════════
 
-// =====================================================
-// AUDIO TASK  (core 0, so redraws on core 1 never stutter)
-// =====================================================
+void audioTask(void*) { for (;;) { audio.loop(); vTaskDelay(1); } }
 
-void audioTask(void*) {
-  for (;;) { audio.loop(); vTaskDelay(1); }
-}
-
-// =====================================================
+// ═══════════════════════════════════════════════════════════════════════════════
 // SETUP / LOOP
-// =====================================================
+// ═══════════════════════════════════════════════════════════════════════════════
 
 void setup() {
   Serial.begin(115200);
 
-  // Display
+  // ── Display ─────────────────────────────────────────────────────────────
   tft.init();
   tft.setRotation(1);
   setupTouch();
   tft.fillScreen(C_BG);
 
-  // SD card (HSPI bus, separate from TFT)
+  // ── SD card ──────────────────────────────────────────────────────────────
   sdSPI.begin(SD_SCK, SD_MISO, SD_MOSI, SD_CS);
   sdOk = SD.begin(SD_CS, sdSPI, 16000000);
-  if (sdOk) scanTracks();
+  if (sdOk) { scanTracks(); Serial.printf("[SD] %d track(s) found\n", trackCount); }
+  else        Serial.println("[SD] Card not found");
 
-  // I2S audio amp
+  // ── I2S audio ────────────────────────────────────────────────────────────
   audio.setPinout(I2S_BCLK, I2S_LRC, I2S_DOUT);
-  audio.setVolume(volToAudio());
+  audio.setVolume(volToAudio(volume));
   xTaskCreatePinnedToCore(audioTask, "audio", 10000, NULL, 2, NULL, 0);
 
-  // Analog mic
+  // ── Mic ──────────────────────────────────────────────────────────────────
   pinMode(MIC_PIN, INPUT);
 
-  // RGB output pins
-  // NOTE: These overlap with SD/I2S — populate only when audio is not wired.
-  // pinMode(RED_PIN,   OUTPUT);
-  // pinMode(GREEN_PIN, OUTPUT);
-  // pinMode(BLUE_PIN,  OUTPUT);
-  // pinMode(FOUNTAIN_PIN, OUTPUT);
+  // ── Gate pin ─────────────────────────────────────────────────────────────
+  pinMode(GATE_PIN, OUTPUT);
+  digitalWrite(GATE_PIN, LOW);  // gate closed on boot
 
-  // Initial state — start at gate waiting screen
+  // ── WiFi ─────────────────────────────────────────────────────────────────
+  // Show connecting screen briefly
+  tft.fillScreen(C_BG);
+  txt("Connecting to WiFi...", W / 2, H / 2, 2, C_DIM, C_BG, MC_DATUM);
+  txt(WIFI_SSID, W / 2, H / 2 + 24, 2, C_GREEN, C_BG, MC_DATUM);
+
+  WiFi.begin(WIFI_SSID, WIFI_PASS);
+  uint32_t wifiStart = millis();
+  while (WiFi.status() != WL_CONNECTED && millis() - wifiStart < 10000) {
+    delay(300);
+  }
+
+  if (WiFi.status() == WL_CONNECTED) {
+    Serial.printf("[WiFi] Connected: %s\n", WiFi.localIP().toString().c_str());
+    char ipMsg[64];
+    snprintf(ipMsg, sizeof(ipMsg), "IP: %s", WiFi.localIP().toString().c_str());
+    tft.fillRect(0, H / 2 + 48, W, 24, C_BG);
+    txt(ipMsg, W / 2, H / 2 + 52, 2, C_GREEN, C_BG, MC_DATUM);
+    delay(1200);
+  } else {
+    Serial.println("[WiFi] Failed — offline mode");
+    tft.fillRect(0, H / 2 + 48, W, 24, C_BG);
+    txt("WiFi failed — offline mode", W / 2, H / 2 + 52, 2, C_RED, C_BG, MC_DATUM);
+    delay(1200);
+  }
+
+  // ── HTTP routes ──────────────────────────────────────────────────────────
+  setupRoutes();
+  server.begin();
+  Serial.println("[HTTP] Server started");
+
+  // ── Gate start ───────────────────────────────────────────────────────────
   enterGateState(GS_WAITING);
 }
 
 void loop() {
-  static uint32_t lt = 0;
+  // HTTP requests — handled on same core as loop (core 1)
+  server.handleClient();
 
-  // Gate polling runs at all times
+  // Gate state machine (timed transitions)
   pollGate();
 
-  // Touch polling — gate screen handles its own touch logic inside onPress
-  if (millis() - lt >= 25) { lt = millis(); pollTouch(); }
+  // Touch polling every 25 ms
+  static uint32_t touchMs = 0;
+  if (millis() - touchMs >= 25) { touchMs = millis(); pollTouch(); }
 
-  // Normal diorama logic only runs when the gate is open
+  // Sensor / animation updates (lights only when gate is open)
   if (gateState == GS_OPEN) {
     updateLive();
     autoAdvance();

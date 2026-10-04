@@ -16,7 +16,7 @@ import {
   sendVolumeControl,
   sendSoundReactive,
   sendForceSensorControl,
-  getGateStatus
+  getEsp32State
 } from './services/esp32Api';
 import './App.css';
 
@@ -99,18 +99,73 @@ function App() {
     }, 1800);
   };
 
-  // ── Poll ESP32 for gate status every 3 s ─────────────────────────────────
+  // ── Poll ESP32 full state every 3 s to sync TFT-originated changes ────────
+  // Only updates web app state — never sends commands back to ESP32.
   useEffect(() => {
-    const poll = async () => {
-      const isOpen = await getGateStatus();
-      if (isOpen === true && gateState !== 'open') {
-        openGate();
-      } else if (isOpen === false && gateState === 'open') {
-        closeGate();
+    const syncFromEsp32 = async () => {
+      const s = await getEsp32State();
+      if (!s) return; // ESP32 unreachable — keep current state
+
+      // ── Gate sync ──────────────────────────────────────────────────────
+      if (s.gateOpen === true && gateState !== 'open') {
+        // TFT opened the gate — unlock web app
+        if (goodbyeTimer.current) clearTimeout(goodbyeTimer.current);
+        setGateState('open');
+        setAppState(prev => ({ ...prev, gateOpen: true }));
+        showToast('✅ Gate opened from TFT — Welcome!');
+        return;
       }
+      if (s.gateOpen === false && gateState === 'open') {
+        // TFT closed the gate — show goodbye on web app
+        if (goodbyeTimer.current) clearTimeout(goodbyeTimer.current);
+        setGateState('goodbye');
+        setAppState(prev => ({ ...prev, gateOpen: false }));
+        showToast('👋 Gate closed from TFT — Goodbye!');
+        goodbyeTimer.current = setTimeout(() => setGateState('waiting'), 3000);
+        return;
+      }
+
+      // ── Full state sync (only when gate is open) ───────────────────────
+      if (gateState !== 'open') return;
+
+      setAppState(prev => {
+        // Map ESP32 state fields → web app state fields
+        // Only overwrite fields that actually changed to avoid re-render churn
+        const next = { ...prev };
+        let changed = false;
+
+        const set = (key, val) => {
+          if (val !== undefined && prev[key] !== val) {
+            next[key] = val;
+            changed = true;
+          }
+        };
+
+        set('lightsOn',         s.lightsOn);
+        set('brightness',       s.brightness);
+        set('lightingMode',     s.lightingMode);
+        set('soundReactiveOn',  s.soundReactive);
+        set('reactionIntensity',s.soundIntensity);
+        set('fountainOn',       s.fountainOn);
+        set('fountainStrength', s.fountainStr);
+        set('fountainAuxStrength', s.fountainAux);
+        set('volume',           s.volume);
+        set('audioPlaying',     s.audioPlaying);
+        set('fountainColor',    s.fountainColor);
+        set('fountainAuxColor', s.fountainAuxColor);
+        set('circleColor',      s.circleColor);
+
+        // Audio track — only update if ESP32 has one and it's different
+        if (s.audioTrack && s.audioTrack !== '' && prev.audioTrack !== s.audioTrack) {
+          next.audioTrack = s.audioTrack;
+          changed = true;
+        }
+
+        return changed ? next : prev;
+      });
     };
 
-    pollTimer.current = setInterval(poll, 3000);
+    pollTimer.current = setInterval(syncFromEsp32, 3000);
     return () => {
       clearInterval(pollTimer.current);
       if (goodbyeTimer.current) clearTimeout(goodbyeTimer.current);
