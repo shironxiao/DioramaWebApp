@@ -1,257 +1,171 @@
 .settings-breadcrumb {
-  background: linear-gradient(90deg, var(--c-green), var(--c-teal));
+  background: linear-gradient(90deg, #10b981, #06b6d4);
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   background-clip: text;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  font-size: 0.78rem;
 }
 
-.settings-grid {
+.settings-single-grid {
   display: grid;
-  grid-template-columns: repeat(2, 1fr);
-  gap: 16px;
+  grid-template-columns: minmax(0, 580px);
+  margin-top: 16px;
+}
+
+.control-card {
+  background: #ffffff;
+  border-radius: 20px;
+  border: 1px solid #e2e8f0;
+  padding: 22px;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.04);
+}
+
+.card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 16px;
+}
+
+.card-title-group {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.card-title {
+  font-size: 1.15rem;
+  font-weight: 700;
+  color: #0f172a;
+  margin: 0;
 }
 
 .icon-badge.sage {
-  background: linear-gradient(135deg, var(--c-green), var(--c-teal-lt));
+  background: linear-gradient(135deg, #10b981, #0d9488);
   color: #fff;
-  box-shadow: var(--shadow-green);
-}
-
-/* ── Connection card ── */
-.connection-status-row {
+  width: 40px;
+  height: 40px;
+  border-radius: 12px;
   display: flex;
   align-items: center;
-  gap: 8px;
-  margin-top: 4px;
+  justify-content: center;
+  box-shadow: 0 4px 12px rgba(16, 185, 129, 0.25);
 }
 
-.status-gold-dot {
-  width: 8px; height: 8px;
-  border-radius: 50%;
-  background: var(--c-amber-lt);
-  box-shadow: 0 0 6px var(--c-amber-lt);
-}
-
-.status-gold-dot.connected {
-  background: var(--c-green-lt);
-  box-shadow: 0 0 8px var(--c-green-lt);
-  animation: pulse-dot 2s infinite;
-}
-
-.status-gold-text {
-  font-size: 0.85rem;
-  font-weight: 600;
-  color: var(--text-2);
-}
-
-.card-description-subtext {
-  font-size: 0.82rem;
-  color: var(--text-2);
-  line-height: 1.45;
-}
-
-.esp-ip-input-group {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.esp-ip-input {
-  flex: 1;
-  padding: 9px 13px;
-  border-radius: 12px;
-  border: 1.5px solid var(--border-md);
+.btn-refresh-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   background: #f8fafc;
-  font-family: monospace;
-  font-size: 0.88rem;
-  font-weight: 600;
-  color: var(--text-1);
-  outline: none;
-  transition: border-color 0.2s, box-shadow 0.2s;
-}
-
-.esp-ip-input:focus {
-  border-color: var(--c-green);
-  box-shadow: 0 0 0 3px rgba(22,163,74,0.15);
-  background: #fff;
-}
-
-.btn-save-ip {
-  background: linear-gradient(135deg, var(--c-green), var(--c-teal-lt));
-  color: #fff;
-  border: none;
-  padding: 9px 16px;
-  border-radius: 11px;
+  border: 1.5px solid #e2e8f0;
+  color: #475569;
+  padding: 6px 12px;
+  border-radius: 20px;
+  font-size: 0.78rem;
   font-weight: 700;
-  font-size: 0.85rem;
-  cursor: pointer;
-  transition: opacity 0.2s, transform 0.2s;
-  box-shadow: var(--shadow-green);
-}
-
-.btn-save-ip:hover { opacity: 0.88; transform: translateY(-1px); }
-
-.btn-card-action {
-  align-self: flex-start;
-  background: #fff;
-  border: 1.5px solid var(--border-md);
-  padding: 8px 18px;
-  border-radius: 12px;
-  font-size: 0.85rem;
-  font-weight: 600;
-  color: var(--text-1);
   cursor: pointer;
   transition: all 0.2s ease;
-  margin-top: 6px;
 }
 
-.btn-card-action:hover {
-  background: var(--c-green-bg);
-  border-color: var(--c-green-border);
-  color: var(--c-green);
+.btn-refresh-pill:hover {
+  border-color: #10b981;
+  color: #10b981;
+  background: #f0fdf4;
 }
 
-/* ── Sensors card ── */
-.sensor-items-list { display: flex; flex-direction: column; gap: 8px; }
+.btn-refresh-pill.spinning svg {
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  100% { transform: rotate(360deg); }
+}
+
+/* ── Sensors items list ── */
+.sensor-items-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
 
 .sensor-item-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  font-size: 0.83rem;
-  padding: 8px 12px;
+  padding: 12px 16px;
   background: #f8fafc;
-  border-radius: 10px;
-  border: 1px solid var(--border);
-}
-
-.sensor-name { color: var(--text-2); font-weight: 500; }
-
-.sensor-val {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-weight: 700;
-}
-
-.sensor-val.gold  { color: var(--c-amber); }
-.sensor-val.muted { color: var(--text-3); }
-
-.dot { width: 6px; height: 6px; border-radius: 50%; }
-.gold-dot  { background: var(--c-amber-lt);  box-shadow: 0 0 5px var(--c-amber-lt);  }
-.muted-dot { background: var(--text-3); }
-
-/* ── Control source card ── */
-.source-buttons-row {
-  display: flex;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-
-.source-pill-btn {
-  background: #fff;
-  border: 1.5px solid var(--border-md);
-  padding: 8px 16px;
-  border-radius: 14px;
-  font-size: 0.83rem;
-  font-weight: 600;
-  color: var(--text-2);
-  cursor: pointer;
-  transition: all 0.2s ease;
-}
-
-.source-pill-btn:hover {
-  background: var(--c-amber-bg);
-  border-color: var(--c-amber-border);
-  color: var(--c-amber);
-}
-
-.source-pill-btn.active {
-  background: linear-gradient(135deg, var(--c-amber-lt), var(--c-orange));
-  color: #fff;
-  border-color: transparent;
-  box-shadow: var(--shadow-amber);
-}
-
-/* ── Account card ── */
-.account-user-name {
-  font-size: 0.98rem;
-  font-weight: 800;
-  color: var(--text-1);
-  padding: 8px 12px;
-  background: #f8fafc;
-  border-radius: 10px;
-  border: 1px solid var(--border);
-}
-
-.btn-logout {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  align-self: flex-start;
-  background: var(--c-rose-bg);
-  border: 1.5px solid var(--c-rose-border);
-  padding: 8px 18px;
   border-radius: 12px;
-  font-size: 0.85rem;
-  font-weight: 700;
-  color: var(--c-rose);
-  cursor: pointer;
-  transition: all 0.2s ease;
+  border: 1px solid #e2e8f0;
+  transition: background 0.2s ease;
 }
 
-.btn-logout:hover {
-  background: var(--c-rose);
-  color: #fff;
-  border-color: transparent;
-  box-shadow: 0 4px 18px rgba(225,29,72,0.28);
+.sensor-item-row:hover {
+  background: #f1f5f9;
 }
 
-/* ── System reset card ── */
-.full-width-card { width: 100%; }
-
-.system-actions-grid {
-  display: grid;
-  grid-template-columns: repeat(2, 1fr);
+.sensor-item-left {
+  display: flex;
+  align-items: center;
   gap: 12px;
 }
 
-.btn-system-reset {
-  background: #fff;
-  border: 1.5px solid var(--border-md);
-  padding: 12px 18px;
-  border-radius: 14px;
-  font-size: 0.88rem;
+.sensor-item-icon {
+  flex-shrink: 0;
+}
+
+.sensor-item-icon.amber { color: #f59e0b; }
+.sensor-item-icon.blue  { color: #3b82f6; }
+.sensor-item-icon.purple{ color: #8b5cf6; }
+.sensor-item-icon.green { color: #10b981; }
+
+.sensor-name {
+  color: #1e293b;
   font-weight: 600;
-  color: var(--text-1);
-  text-align: left;
-  cursor: pointer;
-  transition: all 0.2s ease;
+  font-size: 0.92rem;
 }
 
-.btn-system-reset:hover {
-  background: var(--c-green-bg);
-  border-color: var(--c-green-border);
-  color: var(--c-green);
-  transform: translateY(-1px);
-  box-shadow: var(--shadow-green);
+.sensor-val {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.82rem;
+  font-weight: 700;
+  padding: 4px 10px;
+  border-radius: 20px;
 }
 
-.btn-system-reset.highlight:hover {
-  background: var(--c-rose-bg);
-  border-color: var(--c-rose-border);
-  color: var(--c-rose);
-  box-shadow: 0 4px 18px rgba(225,29,72,0.18);
+.sensor-val.active {
+  background: #ecfdf5;
+  color: #059669;
+  border: 1px solid #a7f3d0;
 }
 
-@media (max-width: 768px) {
-  .settings-grid, .system-actions-grid { grid-template-columns: 1fr; }
-  .btn-card-action, .btn-logout, .btn-system-reset {
-    width: 100%;
-    text-align: center;
-    justify-content: center;
-    padding: 12px 20px;
-  }
-  .source-buttons-row { flex-wrap: wrap; gap: 8px; }
-  .source-pill-btn { flex: 1 1 auto; text-align: center; min-height: 40px; }
+.sensor-val.inactive {
+  background: #f1f5f9;
+  color: #64748b;
+  border: 1px solid #cbd5e1;
+}
+
+.dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+}
+
+.green-dot {
+  background: #10b981;
+  box-shadow: 0 0 6px #10b981;
+}
+
+.muted-dot {
+  background: #94a3b8;
+}
+
+.card-description-subtext {
+  font-size: 0.8rem;
+  color: #64748b;
+  line-height: 1.45;
+  margin-bottom: 0;
 }

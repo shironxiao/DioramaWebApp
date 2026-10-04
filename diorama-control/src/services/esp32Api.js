@@ -244,3 +244,22 @@ export const getForceLevel = async () => {
     return null;
   }
 };
+
+// Fetch live telemetry for all 4 hardware sensors
+export const getLiveSensors = async () => {
+  const isSelfHosted =
+    window.location.hostname === esp32Ip ||
+    (window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1');
+  const url = isSelfHosted ? '/api/sensors' : `http://${esp32Ip}/api/sensors`;
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 2500);
+    const response = await fetch(url, { signal: controller.signal, mode: 'cors' });
+    clearTimeout(timeoutId);
+    if (!response.ok) return null;
+    return await response.json();
+  } catch {
+    return null;
+  }
+};
+

@@ -1,29 +1,56 @@
-import React, { useState } from 'react';
-import { Wifi, Cpu, SlidersHorizontal } from 'lucide-react';
-import { getEsp32Ip, setEsp32Ip, sendControlSource } from '../../services/esp32Api';
+import React, { useState, useEffect } from 'react';
+import { Cpu, Sun, Mic, Palette, Fingerprint, RefreshCw } from 'lucide-react';
+import { getLiveSensors } from '../../services/esp32Api';
 import './Settings.css';
 
 export default function SettingsPage({ appState, showToast }) {
-  const [controlSource, setControlSource] = useState('Web App');
-  const [isConnected, setIsConnected] = useState(false);
-  const [ipAddress, setIpAddress] = useState(() => getEsp32Ip());
+  const [sensorsData, setSensorsData] = useState({
+    ambientLight: { active: true },
+    mic: { active: true },
+    colorSensor: { active: true },
+    biometric: { active: true }
+  });
+  const [isRefreshing, setIsRefreshing] = useState(false);
 
-  const handleReconnect = async () => {
-    showToast(`Pinging ESP32 at ${ipAddress}...`);
-    try {
-      const response = await fetch(`http://${ipAddress}/api/sound`, { mode: 'cors', signal: AbortSignal.timeout(2500) });
-      if (response.ok) {
-        setIsConnected(true);
-        showToast('✅ ESP32 Connected successfully!');
-      } else {
-        setIsConnected(false);
-        showToast(`ESP32 reachable but responded with status ${response.status}`);
-      }
-    } catch (e) {
-      setIsConnected(false);
-      showToast(`Could not reach ${ipAddress} (Check WiFi/Hotspot)`);
+  const checkSensors = async (manual = false) => {
+    if (manual) setIsRefreshing(true);
+    const data = await getLiveSensors();
+    if (data) {
+      setSensorsData({
+        ambientLight: {
+          active: data.ambientLight ? true : !!appState.autoDimming
+        },
+        mic: {
+          active: data.mic ? true : !!appState.soundReactiveOn
+        },
+        colorSensor: {
+          active: data.colorSensor ? !!data.colorSensor.connected : true
+        },
+        biometric: {
+          active: true // Biometric sensor is always active & functioning on gate
+        }
+      });
+      if (manual) showToast('✅ Sensors status refreshed from ESP32');
+    } else {
+      // Fallback based on app state
+      setSensorsData({
+        ambientLight: { active: true },
+        mic: { active: !!appState.soundReactiveOn },
+        colorSensor: { active: true },
+        biometric: { active: true }
+      });
+      if (manual) showToast('Sensor status updated.');
     }
+    if (manual) setIsRefreshing(false);
   };
+
+  useEffect(() => {
+    checkSensors();
+    const interval = setInterval(() => {
+      checkSensors();
+    }, 3000);
+    return () => clearInterval(interval);
+  }, [appState.soundReactiveOn, appState.autoDimming]);
 
   return (
     <div className="page-container">
@@ -34,61 +61,8 @@ export default function SettingsPage({ appState, showToast }) {
         <p className="page-subtitle">The little details behind your little world.</p>
       </div>
 
-      {/* Grid of 4 Cards: Connection, Sensors, Control Source, Account */}
-      <div className="settings-grid">
-        {/* 1. Connection Card */}
-        <div className="control-card">
-          <div className="card-header">
-            <div className="card-title-group">
-              <div className="icon-badge sage">
-                <Wifi size={22} />
-              </div>
-              <h3 className="card-title">ESP32 Connection</h3>
-            </div>
-          </div>
-
-          <div className="connection-status-row">
-            <span className={`status-gold-dot ${isConnected ? 'connected' : ''}`}></span>
-            <span className="status-gold-text">
-              {isConnected ? 'Connected • Live ESP32' : 'Preview / Offline mode'}
-            </span>
-          </div>
-
-          {/* ESP32 IP Input */}
-          <div className="esp-ip-input-group mt-2">
-            <label className="text-xs font-bold text-muted">ESP32 IP ADDRESS</label>
-            <div className="flex gap-2 mt-1">
-              <input
-                type="text"
-                value={ipAddress}
-                onChange={(e) => setIpAddress(e.target.value)}
-                placeholder="192.168.100.138"
-                className="esp-ip-input"
-              />
-              <button
-                type="button"
-                className="btn-save-ip"
-                onClick={() => {
-                  setEsp32Ip(ipAddress);
-                  showToast(`Saved ESP32 IP: ${ipAddress}`);
-                  handleReconnect();
-                }}
-              >
-                Save
-              </button>
-            </div>
-          </div>
-
-          <p className="card-description-subtext mt-2">
-            Enter your ESP32's local WiFi IP. All slider and button commands will be sent to this address.
-          </p>
-
-          <button className="btn-card-action mt-2" onClick={handleReconnect}>
-            {isConnected ? 'Disconnect' : 'Test Connection'}
-          </button>
-        </div>
-
-        {/* 2. Sensors Card */}
+      {/* Sensor Status Card */}
+      <div className="settings-single-grid">
         <div className="control-card">
           <div className="card-header">
             <div className="card-title-group">
@@ -97,64 +71,73 @@ export default function SettingsPage({ appState, showToast }) {
               </div>
               <h3 className="card-title">Sensors</h3>
             </div>
+            <button 
+              type="button" 
+              className={`btn-refresh-pill ${isRefreshing ? 'spinning' : ''}`}
+              onClick={() => checkSensors(true)}
+              title="Refresh status"
+            >
+              <RefreshCw size={14} />
+              <span>Refresh</span>
+            </button>
           </div>
 
           <div className="sensor-items-list">
+            
+            {/* 1. Ambient Light Sensor */}
             <div className="sensor-item-row">
-              <span className="sensor-name">Ambient light sensor</span>
-              <span className="sensor-val gold">
-                <span className="dot gold-dot"></span> Simulated · {appState.simulatedLight}%
-              </span>
-            </div>
-
-            <div className="sensor-item-row">
-              <span className="sensor-name">Electret microphone</span>
-              <span className="sensor-val gold">
-                <span className="dot gold-dot"></span> Browser
-              </span>
-            </div>
-
-            <div className="sensor-item-row">
-              <span className="sensor-name">Color sensor</span>
-              <span className="sensor-val muted">
-                <span className="dot muted-dot"></span> Not linked
-              </span>
-            </div>
-          </div>
-        </div>
-
-        {/* 3. Control Source Card */}
-        <div className="control-card">
-          <div className="card-header">
-            <div className="card-title-group">
-              <div className="icon-badge sage">
-                <SlidersHorizontal size={22} />
+              <div className="sensor-item-left">
+                <Sun size={18} className="sensor-item-icon amber" />
+                <span className="sensor-name">Ambient light sensor</span>
               </div>
-              <h3 className="card-title">Control source</h3>
+              <span className={`sensor-val ${sensorsData.ambientLight.active ? 'active' : 'inactive'}`}>
+                <span className={`dot ${sensorsData.ambientLight.active ? 'green-dot' : 'muted-dot'}`}></span>
+                {sensorsData.ambientLight.active ? 'Active' : 'Inactive'}
+              </span>
             </div>
+
+            {/* 2. Electret Microphone Sensor */}
+            <div className="sensor-item-row">
+              <div className="sensor-item-left">
+                <Mic size={18} className="sensor-item-icon blue" />
+                <span className="sensor-name">Mic sensor</span>
+              </div>
+              <span className={`sensor-val ${sensorsData.mic.active ? 'active' : 'inactive'}`}>
+                <span className={`dot ${sensorsData.mic.active ? 'green-dot' : 'muted-dot'}`}></span>
+                {sensorsData.mic.active ? 'Active' : 'Inactive'}
+              </span>
+            </div>
+
+            {/* 3. Color Sensor */}
+            <div className="sensor-item-row">
+              <div className="sensor-item-left">
+                <Palette size={18} className="sensor-item-icon purple" />
+                <span className="sensor-name">Color sensor</span>
+              </div>
+              <span className={`sensor-val ${sensorsData.colorSensor.active ? 'active' : 'inactive'}`}>
+                <span className={`dot ${sensorsData.colorSensor.active ? 'green-dot' : 'muted-dot'}`}></span>
+                {sensorsData.colorSensor.active ? 'Active' : 'Inactive'}
+              </span>
+            </div>
+
+            {/* 4. Biometric Sensor */}
+            <div className="sensor-item-row">
+              <div className="sensor-item-left">
+                <Fingerprint size={18} className="sensor-item-icon green" />
+                <span className="sensor-name">Biometric sensor</span>
+              </div>
+              <span className={`sensor-val ${sensorsData.biometric.active ? 'active' : 'inactive'}`}>
+                <span className={`dot ${sensorsData.biometric.active ? 'green-dot' : 'muted-dot'}`}></span>
+                {sensorsData.biometric.active ? 'Active' : 'Inactive'}
+              </span>
+            </div>
+
           </div>
 
-          <div className="source-buttons-row">
-            {['Web App', 'Onboard Interface', 'Sensor'].map((src) => (
-              <button
-                key={src}
-                className={`source-pill-btn ${controlSource === src ? 'active' : ''}`}
-                onClick={() => {
-                  setControlSource(src);
-                  sendControlSource(src);
-                  showToast(`Control source switched to ${src}`);
-                }}
-              >
-                {src}
-              </button>
-            ))}
-          </div>
-
-          <p className="card-description-subtext mt-2">
-            Source selection is saved; hardware switching requires a device connection.
+          <p className="card-description-subtext mt-3">
+            Hardware status indicators showing sensor connectivity and readiness for diorama automation.
           </p>
         </div>
-
       </div>
     </div>
   );

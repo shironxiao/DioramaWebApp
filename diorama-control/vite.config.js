@@ -1,9 +1,12 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 
-// Arduino ESP32 LittleFS data folder
-const arduinoDataPath =
-  'C:\\Users\\Augorio Miguel\\OneDrive\\Documents\\Arduino\\Diorama\\data';
+import path from 'path';
+import { fileURLToPath } from 'url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const arduinoDataPath = path.resolve(__dirname, '../Diorama/data');
 
 export default defineConfig({
   // Important for files hosted directly by ESP32
@@ -16,7 +19,7 @@ export default defineConfig({
     outDir: arduinoDataPath,
 
     // Allow Vite to clean the previous build
-    emptyOutDir: true,
+    emptyOutDir: false,
 
     // Keep normal files for now.
     // We can add gzip compression later after the basic setup works.

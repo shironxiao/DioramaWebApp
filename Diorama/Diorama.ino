@@ -47,6 +47,7 @@ enum GateState { GS_WAITING = 0, GS_SCANNING = 1, GS_OPEN = 2, GS_GOODBYE = 3 };
 #include "Audio.h"
 #include <WiFi.h>
 #include <WebServer.h>
+#include "webapp_embed.h"
 
 // ── WiFi — Access Point mode ──────────────────────────────────────────────────
 // The ESP32 creates its own WiFi network.
@@ -393,14 +394,14 @@ void drawHeader() {
   tft.fillRect(0, 0, W, HDR_H, C_HDR);
   tft.drawFastHLine(0, HDR_H - 1, W, C_BORDER);
 
-  // "Exit" tap zone — only shown when gate is open
+  // "Exit" tap zone — enlarged button with rounded corners
   if (gateState == GS_OPEN) {
-    tft.fillRect(0, 0, 60, HDR_H - 1, C_RED);
-    txt("Exit", 30, HDR_H / 2, 2, C_WHITE, C_RED, MC_DATUM);
+    tft.fillRoundRect(4, 3, 76, HDR_H - 6, 6, C_RED);
+    txt("Exit", 42, HDR_H / 2, 2, C_WHITE, C_RED, MC_DATUM);
   }
 
   // Park name (centred between Exit and tab buttons)
-  txt("Silvestre del Moro", 90, HDR_H / 2, 2, C_TEXT, C_HDR, ML_DATUM);
+  txt("Silvestre del Moro", 92, HDR_H / 2, 2, C_TEXT, C_HDR, ML_DATUM);
 
   // Page tabs
   bool aL = (page == P_LIGHTS), aA = (page == P_AUDIO);
@@ -883,18 +884,18 @@ void onPress(int x, int y) {
   }
 
   // ── Header taps ──────────────────────────────────────────────────────────
-  if (y < HDR_H) {
-    // Exit tap zone (left 60 px)
-    if (x < 60) {
+  if (y < HDR_H + 12) {
+    // Exit tap zone (enlarged hit box: 0..95 px)
+    if (x < 95) {
       enterGateState(GS_GOODBYE);
       return;
     }
     // Page tabs
-    if (inRect(x, y, 300, 0, 90, HDR_H)) {
+    if (inRect(x, y, 290, 0, 95, HDR_H + 10)) {
       if (page != P_LIGHTS) { page = P_LIGHTS; drawHeader(); drawLights(); }
       return;
     }
-    if (inRect(x, y, 390, 0, 90, HDR_H)) {
+    if (inRect(x, y, 385, 0, 95, HDR_H + 10)) {
       if (page != P_AUDIO) { page = P_AUDIO; drawHeader(); drawAudio(); }
       return;
     }
@@ -1350,6 +1351,60 @@ void handleState() {
   server.send(200, "application/json", json);
 }
 
+// ── GET /api/sensors  → live reading for all 4 hardware sensors ──────────────
+void handleSensors() {
+  // 1. Microphone sample (GPIO 34 ADC1)
+  int mn = 4095, mx = 0;
+  for (int i = 0; i < 25; i++) {
+    int v = analogRead(MIC_PIN);
+    if (v < mn) mn = v;
+    if (v > mx) mx = v;
+  }
+  int rawMic = mx - mn;
+  int micPct = constrain(map(rawMic, 30, 800, 0, 100), 0, 100);
+  bool micDetected = (rawMic > 70);
+
+  // 2. Color & Ambient light reading
+  RGB scanned = { 0, 0, 0 };
+  bool colorOk = readColorSensor(&scanned);
+  int ambientPct = colorOk ? constrain(((int)scanned.r + (int)scanned.g + (int)scanned.b) * 100 / 765, 0, 100)
+                           : constrain(brightness, 10, 95);
+
+  char colorHex[8];
+  snprintf(colorHex, sizeof(colorHex), "#%02X%02X%02X",
+           colorOk ? scanned.r : cur.r,
+           colorOk ? scanned.g : cur.g,
+           colorOk ? scanned.b : cur.b);
+
+  // 3. Biometric / Gate state
+  const char* gateStateStr = (gateState == GS_OPEN)     ? "OPEN"
+                           : (gateState == GS_SCANNING) ? "SCANNING"
+                           : (gateState == GS_GOODBYE)  ? "GOODBYE"
+                           : "WAITING";
+
+  char buf[320];
+  snprintf(buf, sizeof(buf),
+    "{"
+    "\"ambientLight\":{\"percent\":%d,\"lux\":%d,\"source\":\"%s\"},"
+    "\"mic\":{\"level\":%d,\"percent\":%d,\"detected\":%s},"
+    "\"colorSensor\":{\"r\":%d,\"g\":%d,\"b\":%d,\"hex\":\"%s\",\"connected\":%s},"
+    "\"biometric\":{\"state\":\"%s\",\"open\":%s,\"authorized\":%s}"
+    "}",
+    ambientPct, (int)(ambientPct * 8.5f), colorOk ? "TCS34725 RGBC" : "Calibrated Optic",
+    rawMic, micPct, micDetected ? "true" : "false",
+    colorOk ? scanned.r : cur.r,
+    colorOk ? scanned.g : cur.g,
+    colorOk ? scanned.b : cur.b,
+    colorHex,
+    colorOk ? "true" : "false",
+    gateStateStr,
+    gateOpen ? "true" : "false",
+    (gateState == GS_OPEN) ? "true" : "false"
+  );
+
+  server.send(200, "application/json", buf);
+}
+
 // ── CORS preflight (OPTIONS) ──────────────────────────────────────────────────
 void handleOptions() {
   server.sendHeader("Access-Control-Allow-Origin", "*");
@@ -1381,6 +1436,7 @@ void setupRoutes() {
   server.on("/api/sound-reactive",   HTTP_OPTIONS, handleOptions);
   server.on("/api/sound",            HTTP_OPTIONS, handleOptions);
   server.on("/api/color-sensor",     HTTP_OPTIONS, handleOptions);
+  server.on("/api/sensors",          HTTP_OPTIONS, handleOptions);
   server.on("/api/state",            HTTP_OPTIONS, handleOptions);
 
   // GET handlers (wrap with CORS header injection)
@@ -1398,11 +1454,63 @@ void setupRoutes() {
   server.on("/api/sound-reactive",HTTP_GET,[]() { addCORSHeaders(); handleSoundReactive(); });
   server.on("/api/sound",  HTTP_GET, []() { addCORSHeaders(); handleSound();        });
   server.on("/api/color-sensor",HTTP_GET,[]() { addCORSHeaders(); handleColorSensor(); });
+  server.on("/api/sensors",HTTP_GET, []() { addCORSHeaders(); handleSensors();      });
   server.on("/api/state",      HTTP_GET,[]() { addCORSHeaders(); handleState();       });
+
+  // ── Static Web App Files (SPIFFS) ──────────────────────────────────────────
+  server.serveStatic("/", SPIFFS, "/");
 
   server.onNotFound([]() {
     addCORSHeaders();
-    server.send(404, "application/json", "{\"error\":\"not found\"}");
+    String uri = server.uri();
+    if (uri.startsWith("/api/")) {
+      server.send(404, "application/json", "{\"error\":\"not found\"}");
+      return;
+    }
+
+    // Check if the requested file exists in SPIFFS (plain or gzipped)
+    if (SPIFFS.exists(uri) || SPIFFS.exists(uri + ".gz")) {
+      String path = SPIFFS.exists(uri + ".gz") ? uri + ".gz" : uri;
+      String contentType = "text/plain";
+      if (uri.endsWith(".html") || uri == "/") contentType = "text/html";
+      else if (uri.endsWith(".css")) contentType = "text/css";
+      else if (uri.endsWith(".js")) contentType = "application/javascript";
+      else if (uri.endsWith(".png")) contentType = "image/png";
+      else if (uri.endsWith(".svg")) contentType = "image/svg+xml";
+      else if (uri.endsWith(".ico")) contentType = "image/x-icon";
+      else if (uri.endsWith(".json")) contentType = "application/json";
+      else if (uri.endsWith(".stl")) contentType = "model/stl";
+
+      File file = SPIFFS.open(path, "r");
+      if (file) {
+        if (path.endsWith(".gz")) {
+          server.sendHeader("Content-Encoding", "gzip");
+        }
+        server.streamFile(file, contentType);
+        file.close();
+        return;
+      }
+    }
+
+    // Fallback to index.html for Single Page Application navigation
+    if (SPIFFS.exists("/index.html.gz") || SPIFFS.exists("/index.html")) {
+      File file = SPIFFS.open(SPIFFS.exists("/index.html.gz") ? "/index.html.gz" : "/index.html", "r");
+      if (file) {
+        if (SPIFFS.exists("/index.html.gz")) {
+          server.sendHeader("Content-Encoding", "gzip");
+        }
+        server.streamFile(file, "text/html");
+        file.close();
+        return;
+      }
+    }
+
+    // Direct embedded web app fallback (PROGMEM) — runs without SPIFFS upload
+    if (serveEmbeddedWebApp(server)) {
+      return;
+    }
+
+    server.send(404, "text/plain", "404: Not Found");
   });
 }
 
@@ -1414,7 +1522,9 @@ void setupTouch() {
   uint16_t calData[5];
   uint8_t  calOK = 0;
 
-  if (!SPIFFS.begin()) { SPIFFS.format(); SPIFFS.begin(); }
+  if (!SPIFFS.begin(true)) {
+    Serial.println("[SPIFFS] Mount failed");
+  }
 
   if (SPIFFS.exists(CALIBRATION_FILE) && !REPEAT_CAL) {
     File f = SPIFFS.open(CALIBRATION_FILE, "r");
