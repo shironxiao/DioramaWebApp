@@ -31,8 +31,11 @@
   GET /api/sound                                → {"detected":bool,"level":0-1023}
 */
 
-// ── Types (before Arduino auto-protos) ──────────────────────────────────────
-#include "Diorama_types.h"
+// ── Types — defined inline to avoid header include issues ───────────────────
+enum Page     { P_LIGHTS = 0, P_AUDIO = 1 };
+enum Mode     { M_BASIC = 0, M_COLOR = 1, M_SOUND = 2, M_ADAPT = 3 };
+enum Drag     { D_NONE = 0, D_BR, D_HUE, D_SAT, D_SENS, D_VOL };
+enum GateState { GS_WAITING = 0, GS_SCANNING = 1, GS_OPEN = 2, GS_GOODBYE = 3 };
 
 // ── Libraries ────────────────────────────────────────────────────────────────
 #include <TFT_eSPI.h>
