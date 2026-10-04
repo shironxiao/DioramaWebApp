@@ -46,7 +46,6 @@ enum GateState { GS_WAITING = 0, GS_SCANNING = 1, GS_OPEN = 2, GS_GOODBYE = 3 };
 #include "Audio.h"
 #include <WiFi.h>
 #include <WebServer.h>
-#include <ArduinoJson.h>
 
 // ── WiFi credentials — change to your network ────────────────────────────────
 #define WIFI_SSID  "DioramaWiFi"
@@ -1079,38 +1078,59 @@ void handleColorSensor() {
 // ── GET /api/state  → full diorama state snapshot ────────────────────────────
 // The web app polls this every few seconds to sync changes made on the TFT.
 void handleState() {
-  // Build zone colour hex strings
+  // Zone colour hex strings
   char leftHex[8], rightHex[8], centerHex[8];
   snprintf(leftHex,   sizeof(leftHex),   "#%02X%02X%02X", zone[0].r, zone[0].g, zone[0].b);
   snprintf(rightHex,  sizeof(rightHex),  "#%02X%02X%02X", zone[1].r, zone[1].g, zone[1].b);
   snprintf(centerHex, sizeof(centerHex), "#%02X%02X%02X", zone[2].r, zone[2].g, zone[2].b);
 
-  // Current track name (strip leading slash and extension)
+  // Current track name — strip leading slash and extension
   char trackName[48] = "";
   if (trackCount > 0) {
     strlcpy(trackName, trackPath[curTrack] + 1, sizeof(trackName));
     char* dot = strrchr(trackName, '.'); if (dot) *dot = 0;
   }
 
-  StaticJsonDocument<512> doc;
-  doc["gateOpen"]        = gateOpen;
-  doc["lightsOn"]        = lightsOn;
-  doc["brightness"]      = brightness;
-  doc["lightingMode"]    = lightMode;
-  doc["soundReactive"]   = soundReactive;
-  doc["soundIntensity"]  = soundIntensity;
-  doc["fountainOn"]      = fountainOn;
-  doc["fountainStr"]     = fountainStr;
-  doc["fountainAux"]     = fountainAux;
-  doc["volume"]          = volume;
-  doc["audioPlaying"]    = audioPlaying;
-  doc["audioTrack"]      = (trackCount > 0) ? trackName : "";
-  doc["fountainColor"]   = leftHex;
-  doc["fountainAuxColor"]= rightHex;
-  doc["circleColor"]     = centerHex;
+  // Escape lightMode string for JSON (replace " with \")
+  char modeEsc[48];
+  strlcpy(modeEsc, lightMode.c_str(), sizeof(modeEsc));
 
-  String json;
-  serializeJson(doc, json);
+  char json[512];
+  snprintf(json, sizeof(json),
+    "{"
+    "\"gateOpen\":%s,"
+    "\"lightsOn\":%s,"
+    "\"brightness\":%d,"
+    "\"lightingMode\":\"%s\","
+    "\"soundReactive\":%s,"
+    "\"soundIntensity\":%d,"
+    "\"fountainOn\":%s,"
+    "\"fountainStr\":%d,"
+    "\"fountainAux\":%d,"
+    "\"volume\":%d,"
+    "\"audioPlaying\":%s,"
+    "\"audioTrack\":\"%s\","
+    "\"fountainColor\":\"%s\","
+    "\"fountainAuxColor\":\"%s\","
+    "\"circleColor\":\"%s\""
+    "}",
+    gateOpen       ? "true" : "false",
+    lightsOn       ? "true" : "false",
+    brightness,
+    modeEsc,
+    soundReactive  ? "true" : "false",
+    soundIntensity,
+    fountainOn     ? "true" : "false",
+    fountainStr,
+    fountainAux,
+    volume,
+    audioPlaying   ? "true" : "false",
+    trackName,
+    leftHex,
+    rightHex,
+    centerHex
+  );
+
   server.send(200, "application/json", json);
 }
 
