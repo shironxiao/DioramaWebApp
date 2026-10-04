@@ -48,9 +48,13 @@ enum GateState { GS_WAITING = 0, GS_SCANNING = 1, GS_OPEN = 2, GS_GOODBYE = 3 };
 #include <WiFi.h>
 #include <WebServer.h>
 
-// ── WiFi credentials — change to your network ────────────────────────────────
-#define WIFI_SSID  "DioramaWiFi"
-#define WIFI_PASS  "Diorama123"
+// ── WiFi — Access Point mode ──────────────────────────────────────────────────
+// The ESP32 creates its own WiFi network.
+// Phone/PC connects to this network, then opens http://192.168.4.1
+// to reach the web app (if served from ESP32 SPIFFS) or uses the IP
+// shown on the TFT to configure the web app's Settings page.
+#define WIFI_AP_SSID  "Diorama-Park"
+#define WIFI_AP_PASS  "diorama123"   // min 8 chars; set "" for open network
 
 // ── Pins ─────────────────────────────────────────────────────────────────────
 #define SD_SCK    14
@@ -178,6 +182,9 @@ float lvl     = 0;
 int   hueBase = 0;
 RGB   live    = {255, 180, 90};
 
+// Color scan state: 0=idle, 1=scanning, 2=error/no-sensor
+int colorScanState = 0;
+
 bool wasTouched = false;
 
 // Forward declarations
@@ -223,6 +230,91 @@ void applyHardwareGate(bool open) {
   // myServo.write(open ? 90 : 0);
   // digitalWrite(GATE_PIN, open ? HIGH : LOW);
   Serial.printf("[GATE] Actuator: %s\n", open ? "OPEN" : "CLOSED");
+}
+
+// ── Color sensor (TCS34725 via I2C) ──────────────────────────────────────────
+// Returns true and fills *out if a reading was obtained.
+// Wire: SDA=21, SCL=22  (standard ESP32 I2C pins).
+// If no sensor is wired this returns false after a quick NAK check.
+#include <Wire.h>
+#define TCS_ADDR       0x29
+#define TCS_CMD        0x80
+#define TCS_ENABLE     0x00
+#define TCS_ATIME      0x01
+#define TCS_CONTROL    0x0F
+#define TCS_RDATAL     0x16  // clear, red, green, blue 16-bit each
+
+bool tcsWrite(uint8_t reg, uint8_t val) {
+  Wire.beginTransmission(TCS_ADDR);
+  Wire.write(TCS_CMD | reg);
+  Wire.write(val);
+  return Wire.endTransmission() == 0;
+}
+
+bool readColorSensor(RGB* out) {
+  Wire.begin();
+  // Check if device is present
+  Wire.beginTransmission(TCS_ADDR);
+  if (Wire.endTransmission() != 0) return false;  // no ACK — not wired
+
+  // Power on + enable RGBC
+  tcsWrite(TCS_ENABLE,  0x01);        // PON
+  delay(3);
+  tcsWrite(TCS_ENABLE,  0x03);        // PON + AEN
+  tcsWrite(TCS_ATIME,   0xC0);        // ~154 ms integration
+  tcsWrite(TCS_CONTROL, 0x00);        // 1× gain
+  delay(160);                         // wait for integration
+
+  // Read 8 bytes: C_L C_H R_L R_H G_L G_H B_L B_H
+  Wire.beginTransmission(TCS_ADDR);
+  Wire.write(TCS_CMD | 0xA0 | TCS_RDATAL); // auto-increment
+  Wire.endTransmission();
+  Wire.requestFrom((uint8_t)TCS_ADDR, (uint8_t)8);
+  if (Wire.available() < 8) return false;
+
+  uint16_t c = Wire.read() | (Wire.read() << 8);
+  uint16_t r = Wire.read() | (Wire.read() << 8);
+  uint16_t g = Wire.read() | (Wire.read() << 8);
+  uint16_t b = Wire.read() | (Wire.read() << 8);
+
+  if (c == 0) return false;
+  // Scale to 0-255
+  out->r = constrain((uint32_t)r * 255 / c, 0, 255);
+  out->g = constrain((uint32_t)g * 255 / c, 0, 255);
+  out->b = constrain((uint32_t)b * 255 / c, 0, 255);
+
+  Serial.printf("[SENSOR] R=%d G=%d B=%d (raw C=%d)\n", out->r, out->g, out->b, c);
+  return true;
+}
+
+// Called from TFT touch — runs the scan and updates cur / sliders
+void triggerColorScan() {
+  colorScanState = 1;   // scanning
+  drawColorPanel();     // show "Scanning..." button state
+
+  RGB scanned;
+  if (readColorSensor(&scanned)) {
+    cur = scanned;
+    // Back-calculate hue/sat from scanned RGB
+    float r = cur.r / 255.f, g = cur.g / 255.f, b2 = cur.b / 255.f;
+    float mx = max(r, max(g, b2)), mn = min(r, min(g, b2)), d = mx - mn;
+    float hh = 0;
+    if (d > 0) {
+      if      (mx == r) hh = 60.f * fmodf((g - b2) / d, 6.f);
+      else if (mx == g) hh = 60.f * ((b2 - r) / d + 2);
+      else              hh = 60.f * ((r - g) / d + 4);
+      if (hh < 0) hh += 360;
+    }
+    hue = (int)hh % 360;
+    sat = (mx == 0) ? 0 : (int)(d / mx * 100);
+    colorScanState = 0;
+    Serial.printf("[SENSOR] Scanned #%02X%02X%02X hue=%d sat=%d\n",
+                  cur.r, cur.g, cur.b, hue, sat);
+  } else {
+    colorScanState = 2;  // error / no sensor
+    Serial.println("[SENSOR] No color sensor found");
+  }
+  drawColorPanel();
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -275,19 +367,6 @@ void drawSlider(int y, int val, uint16_t accent) {
   tft.drawCircle(kx, y, 12, C_TEXT);
 }
 
-// Gradient hue/sat slider
-void drawGradSlider(int y, bool isHue) {
-  tft.fillRect(0, y - 14, W, 28, C_BG);
-  for (int x = SL_X0; x < SL_X1; x += 4) {
-    int p = (long)(x - SL_X0) * 100 / (SL_X1 - SL_X0);
-    RGB c = isHue ? hsv(p * 359 / 100, 100, 100) : hsv(hue, p, 100);
-    tft.fillRect(x, y - 4, 4, 8, c565(c));
-  }
-  int kx = SL_X0 + (long)(SL_X1 - SL_X0) * (isHue ? hue * 100 / 359 : sat) / 100;
-  tft.fillCircle(kx, y, 11, c565(isHue ? hsv(hue, 100, 100) : cur));
-  tft.drawCircle(kx, y, 11, C_TEXT);
-}
-
 int pctFromX(int x) {
   return constrain((long)(x - SL_X0) * 100 / (SL_X1 - SL_X0), 0, 100);
 }
@@ -330,8 +409,8 @@ void drawHeader() {
   tft.fillRect(390, 0, 90, HDR_H - 1, aA ? C_GREEN  : C_HDR);
   txt("Audio",  435, HDR_H / 2, 2, aA ? C_WHITE : C_DIM, aA ? C_GREEN : C_HDR, MC_DATUM);
 
-  // WiFi / SD status dots (far right, top)
-  tft.fillCircle(474, 8,  4, WiFi.status() == WL_CONNECTED ? C_GREEN : C_RED);
+  // WiFi AP dot (green = AP active) + SD dot
+  tft.fillCircle(474, 8,  4, WiFi.softAPgetStationNum() >= 0 ? C_GREEN : C_RED);
   tft.fillCircle(474, 22, 4, sdOk ? C_GREEN : C_RED);
 }
 
@@ -520,44 +599,68 @@ void drawBrightnessRow() {
 }
 
 // ── Colorful panel ────────────────────────────────────────────────────────────
-//  y 170..190 : "Pick colour:" + selected swatch
-//  y 194..230 : Row 1 of palette (6 swatches, 36px diameter circles, cx 38+i*68)
-//  y 234..270 : Row 2 of palette
-//  y 276..310 : Apply zone buttons [ALL][Left][Right][Center]
-
+//
+//  py+0   : "Color:" swatch  hex  |  [Scan Sensor] button
+//  py+20  : Hue gradient slider
+//  py+44  : "Sat" label + value
+//  py+56  : Saturation gradient slider
+//  py+76  : Apply-zone buttons  [ALL] [Left] [Right] [Center]
+//
+// colorScanState: 0=idle 1=scanning 2=done/error (redraws panel)
+//
 void drawColorPanel() {
-  int py = BODY_Y + 168;
+  int py = BODY_Y + 170;
   tft.fillRect(0, py, W, H - py, C_BG);
 
-  // Selected colour swatch + label
-  label("Pick colour:", SL_X0, py);
-  tft.fillRoundRect(120, py - 2, 34, 20, 4, c565(cur));
-  tft.drawRoundRect(120, py - 2, 34, 20, 4, C_TEXT);
+  // ── Colour preview + hex ──────────────────────────────────────────────────
+  label("Color:", SL_X0, py + 2);
+  tft.fillRoundRect(72, py - 2, 36, 18, 4, c565(cur));
+  tft.drawRoundRect(72, py - 2, 36, 18, 4, C_TEXT);
   char hex[8]; snprintf(hex, sizeof(hex), "#%02X%02X%02X", cur.r, cur.g, cur.b);
-  txt(hex, 162, py, 2, C_TEXT, C_BG, TL_DATUM);
+  txt(hex, 114, py + 2, 2, C_TEXT, C_BG, TL_DATUM);
 
-  // Palette: 2 rows × 6 swatches
-  // Row 1: PAL[0..5]   cy = py+32
-  // Row 2: PAL[6..11]  cy = py+70
-  for (int i = 0; i < 12; i++) {
-    int row = i / 6;
-    int col = i % 6;
-    int cx2 = 38 + col * 68;
-    int cy2 = py + 32 + row * 42;
-    uint16_t col565 = c565(PAL[i]);
-    // Highlight selected
-    bool sel = (cur.r == PAL[i].r && cur.g == PAL[i].g && cur.b == PAL[i].b);
-    tft.fillCircle(cx2, cy2, 16, col565);
-    tft.drawCircle(cx2, cy2, 16, sel ? C_TEXT : C_BORDER);
-    if (sel) tft.drawCircle(cx2, cy2, 18, C_TEXT);
+  // ── Scan Sensor button (right side of header row) ─────────────────────────
+  // States: idle=purple outline, scanning=amber filled, no-sensor=red
+  bool scanning  = (colorScanState == 1);
+  bool scanError = (colorScanState == 2);
+  uint16_t scanFill   = scanning  ? C_AMBER  : scanError ? C_RED   : C_CARD;
+  uint16_t scanBorder = scanning  ? C_AMBER  : scanError ? C_RED   : C_PURPLE;
+  uint16_t scanTxtCol = (scanning || scanError) ? C_WHITE : C_PURPLE;
+  card(306, py - 3, 164, 22, scanFill, scanBorder);
+  txt(scanning  ? "Scanning..." :
+      scanError ? "No Sensor"   : "Scan Sensor",
+      388, py + 8, 2, scanTxtCol, scanFill, MC_DATUM);
+
+  // ── Hue gradient slider ───────────────────────────────────────────────────
+  label("Hue", SL_X0, py + 22);
+  for (int x = SL_X0; x < SL_X1; x += 3) {
+    int h = (long)(x - SL_X0) * 359 / (SL_X1 - SL_X0);
+    RGB c = hsv(h, 100, 100);
+    tft.fillRect(x, py + 32, 3, 8, c565(c));
   }
+  tft.drawRect(SL_X0, py + 32, SL_X1 - SL_X0, 8, C_BORDER);
+  int hkx = SL_X0 + (long)(SL_X1 - SL_X0) * hue / 359;
+  tft.fillCircle(hkx, py + 36, 10, c565(hsv(hue, 100, 100)));
+  tft.drawCircle(hkx, py + 36, 10, C_TEXT);
 
-  // Apply-zone buttons [ALL] [Left] [Right] [Center]
-  // y = py+118, height=32, each 110px wide with 3px gap
+  // ── Saturation gradient slider ────────────────────────────────────────────
+  label("Sat", SL_X0, py + 50);
+  drawPct(W - 10, py + 50, sat, C_DIM);
+  for (int x = SL_X0; x < SL_X1; x += 3) {
+    int s = (long)(x - SL_X0) * 100 / (SL_X1 - SL_X0);
+    RGB c = hsv(hue, s, 100);
+    tft.fillRect(x, py + 60, 3, 8, c565(c));
+  }
+  tft.drawRect(SL_X0, py + 60, SL_X1 - SL_X0, 8, C_BORDER);
+  int skx = SL_X0 + (long)(SL_X1 - SL_X0) * sat / 100;
+  tft.fillCircle(skx, py + 64, 10, c565(cur));
+  tft.drawCircle(skx, py + 64, 10, C_TEXT);
+
+  // ── Apply-zone buttons ────────────────────────────────────────────────────
   const char* zn[4] = { "ALL", "Left", "Right", "Center" };
   for (int i = 0; i < 4; i++) {
     bool act = (lastApplied == i);
-    btn(4 + i * 119, py + 118, 115, 32, zn[i], act, C_AMBER);
+    btn(4 + i * 119, py + 80, 115, 32, zn[i], act, C_AMBER);
   }
 }
 
@@ -850,27 +953,30 @@ void onPress(int x, int y) {
 
     // ── Colorful mode touch zones ─────────────────────────────────────────
     if (tftMode == M_COLOR) {
-      int py = BODY_Y + 168;
+      int py = BODY_Y + 170;
 
-      // Palette circles — 2 rows × 6, same coords as drawColorPanel()
-      for (int i = 0; i < 12; i++) {
-        int row = i / 6;
-        int col = i % 6;
-        int cx2 = 38 + col * 68;
-        int cy2 = py + 32 + row * 42;
-        if ((long)(x - cx2)*(x - cx2) + (long)(y - cy2)*(y - cy2) <= 18*18) {
-          cur = PAL[i];
-          Serial.printf("[COLOR] Selected #%02X%02X%02X\n", cur.r, cur.g, cur.b);
-          drawColorPanel();
-          return;
+      // Scan Sensor button  y = py-3 .. py+19,  x = 306..470
+      if (inRect(x, y, 306, py - 3, 164, 22)) {
+        if (colorScanState != 1) {  // ignore if already scanning
+          triggerColorScan();
         }
+        return;
       }
 
-      // Apply-zone buttons  y = py+118 .. py+150
-      if (inRect(x, y, 0, py + 118, W, 34)) {
+      // Hue slider zone  y = py+24 .. py+48
+      if (inRect(x, y, SL_X0, py + 24, SL_X1 - SL_X0, 24)) {
+        dragging = D_HUE; onDrag(x); return;
+      }
+
+      // Saturation slider zone  y = py+54 .. py+78
+      if (inRect(x, y, SL_X0, py + 54, SL_X1 - SL_X0, 24)) {
+        dragging = D_SAT; onDrag(x); return;
+      }
+
+      // Apply-zone buttons  y = py+80 .. py+112
+      if (inRect(x, y, 0, py + 80, W, 34)) {
         for (int i = 0; i < 4; i++) {
-          if (inRect(x, y, 4 + i * 119, py + 118, 115, 32)) {
-            // Apply cur colour to zone
+          if (inRect(x, y, 4 + i * 119, py + 80, 115, 32)) {
             if      (i == 0) { zone[0] = zone[1] = zone[2] = cur; }
             else if (i == 1) { zone[0] = cur; }
             else if (i == 2) { zone[1] = cur; }
@@ -912,13 +1018,33 @@ void onDrag(int x) {
       }
       break;
 
+    case D_HUE: {
+      int h = (long)p * 359 / 100;
+      if (h != hue) {
+        hue = h;
+        cur = hsv(hue, sat, 100);
+        Serial.printf("[COLOR] Hue %d -> #%02X%02X%02X\n", hue, cur.r, cur.g, cur.b);
+        drawColorPanel();
+      }
+      break;
+    }
+
+    case D_SAT:
+      if (p != sat) {
+        sat = p;
+        cur = hsv(hue, sat, 100);
+        Serial.printf("[COLOR] Sat %d%% -> #%02X%02X%02X\n", sat, cur.r, cur.g, cur.b);
+        drawColorPanel();
+      }
+      break;
+
     case D_SENS:
       if (p != sens) {
         sens = p;
         Serial.printf("[SOUND] Sensitivity %d%%\n", sens);
-        int py = BODY_Y + 184;
+        int py = BODY_Y + 168;
         drawPct(W - 10, py + 54, p, C_AMBER);
-        drawSlider(py + 82, p, C_AMBER);
+        drawSlider(py + 80, p, C_AMBER);
       }
       break;
 
@@ -1153,8 +1279,16 @@ void handleSound() {
 
 // ── GET /api/color-sensor ─────────────────────────────────────────────────────
 void handleColorSensor() {
-  // Stub — replace with real TCS34725 read when wired
-  server.send(404, "application/json", "{\"error\":\"no sensor\"}");
+  RGB scanned;
+  if (readColorSensor(&scanned)) {
+    char buf[64];
+    snprintf(buf, sizeof(buf),
+             "{\"r\":%d,\"g\":%d,\"b\":%d}",
+             scanned.r, scanned.g, scanned.b);
+    server.send(200, "application/json", buf);
+  } else {
+    server.send(404, "application/json", "{\"error\":\"no sensor\"}");
+  }
 }
 
 // ── GET /api/state  → full diorama state snapshot ────────────────────────────
@@ -1338,31 +1472,37 @@ void setup() {
   pinMode(GATE_PIN, OUTPUT);
   digitalWrite(GATE_PIN, LOW);  // gate closed on boot
 
-  // ── WiFi ─────────────────────────────────────────────────────────────────
-  // Show connecting screen briefly
+  // ── WiFi — Access Point ───────────────────────────────────────────────────
   tft.fillScreen(C_BG);
-  txt("Connecting to WiFi...", W / 2, H / 2, 2, C_DIM, C_BG, MC_DATUM);
-  txt(WIFI_SSID, W / 2, H / 2 + 24, 2, C_GREEN, C_BG, MC_DATUM);
+  txt("Starting WiFi AP...", W / 2, H / 2 - 20, 2, C_DIM, C_BG, MC_DATUM);
 
-  WiFi.begin(WIFI_SSID, WIFI_PASS);
-  uint32_t wifiStart = millis();
-  while (WiFi.status() != WL_CONNECTED && millis() - wifiStart < 10000) {
-    delay(300);
-  }
+  WiFi.mode(WIFI_AP);
+  WiFi.softAP(WIFI_AP_SSID, WIFI_AP_PASS);
+  delay(500); // give AP time to start
 
-  if (WiFi.status() == WL_CONNECTED) {
-    Serial.printf("[WiFi] Connected: %s\n", WiFi.localIP().toString().c_str());
-    char ipMsg[64];
-    snprintf(ipMsg, sizeof(ipMsg), "IP: %s", WiFi.localIP().toString().c_str());
-    tft.fillRect(0, H / 2 + 48, W, 24, C_BG);
-    txt(ipMsg, W / 2, H / 2 + 52, 2, C_GREEN, C_BG, MC_DATUM);
-    delay(1200);
-  } else {
-    Serial.println("[WiFi] Failed — offline mode");
-    tft.fillRect(0, H / 2 + 48, W, 24, C_BG);
-    txt("WiFi failed — offline mode", W / 2, H / 2 + 52, 2, C_RED, C_BG, MC_DATUM);
-    delay(1200);
-  }
+  IPAddress apIP = WiFi.softAPIP();
+  Serial.printf("[WiFi] AP started — SSID: %s  IP: %s\n",
+                WIFI_AP_SSID, apIP.toString().c_str());
+
+  // Show connection info on TFT
+  tft.fillScreen(C_BG);
+  tft.fillRect(0, 0, W, 4, C_GREEN);
+  txt("WiFi Ready!", W / 2, 30, 4, C_GREEN, C_BG, MC_DATUM);
+
+  txt("Connect your phone/PC to:", W / 2, 80, 2, C_DIM, C_BG, MC_DATUM);
+  card(40, 98, 400, 36, C_GREEN, C_GREEN);
+  txt(WIFI_AP_SSID, W / 2, 116, 4, C_WHITE, C_GREEN, MC_DATUM);
+
+  txt("Password:", W / 2, 155, 2, C_DIM, C_BG, MC_DATUM);
+  txt(WIFI_AP_PASS, W / 2, 173, 2, C_TEXT, C_BG, MC_DATUM);
+
+  txt("Then set ESP32 IP in Settings to:", W / 2, 210, 2, C_DIM, C_BG, MC_DATUM);
+  char ipLine[32];
+  snprintf(ipLine, sizeof(ipLine), "%s", apIP.toString().c_str());
+  card(40, 228, 400, 36, C_AMBER, C_AMBER);
+  txt(ipLine, W / 2, 246, 4, C_WHITE, C_AMBER, MC_DATUM);
+
+  delay(4000); // show for 4 seconds then continue to gate screen
 
   // ── HTTP routes ──────────────────────────────────────────────────────────
   setupRoutes();
