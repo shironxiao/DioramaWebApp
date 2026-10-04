@@ -46,8 +46,8 @@
 #include <ArduinoJson.h>
 
 // ── WiFi credentials — change to your network ────────────────────────────────
-#define WIFI_SSID  "YourSSID"
-#define WIFI_PASS  "YourPassword"
+#define WIFI_SSID  "DioramaWiFi"
+#define WIFI_PASS  "Diorama123"
 
 // ── Pins ─────────────────────────────────────────────────────────────────────
 #define SD_SCK    14
