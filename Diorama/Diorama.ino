@@ -32,6 +32,7 @@
 */
 
 // ── Types — defined inline to avoid header include issues ───────────────────
+struct RGB    { uint8_t r, g, b; };   // must be first — used in function signatures
 enum Page     { P_LIGHTS = 0, P_AUDIO = 1 };
 enum Mode     { M_BASIC = 0, M_COLOR = 1, M_SOUND = 2, M_ADAPT = 3 };
 enum Drag     { D_NONE = 0, D_BR, D_HUE, D_SAT, D_SENS, D_VOL };
@@ -105,7 +106,6 @@ const int BODY_H = H - HDR_H; // 284 px
 const int SL_X0 = 20, SL_X1 = 460;
 
 // ── Colour helpers ────────────────────────────────────────────────────────────
-struct RGB { uint8_t r, g, b; };
 
 RGB hsv(int h, int s, int v) {
   float S = s / 100.f, V = v / 100.f;
@@ -188,7 +188,6 @@ void drawLights();
 void drawAudio();
 void onDrag(int x);
 void pushZones();
-void applyHardwareLight();
 void applyHardwareGate(bool open);
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -355,7 +354,9 @@ void drawGateScreen() {
   switch (gateState) {
     case GS_WAITING: {
       // Fingerprint rings
-      for (int r : {20, 13, 6}) tft.drawCircle(cx, cy, r, C_GREEN);
+      tft.drawCircle(cx, cy, 20, C_GREEN);
+      tft.drawCircle(cx, cy, 13, C_GREEN);
+      tft.drawCircle(cx, cy,  6, C_GREEN);
       tft.drawFastVLine(cx, cy - 20, 40, C_GREEN);
       tft.drawFastHLine(cx - 20, cy, 40, C_GREEN);
 
@@ -368,7 +369,9 @@ void drawGateScreen() {
       break;
     }
     case GS_SCANNING: {
-      for (int r : {20, 13, 6}) tft.drawCircle(cx, cy, r, C_AMBER);
+      tft.drawCircle(cx, cy, 20, C_AMBER);
+      tft.drawCircle(cx, cy, 13, C_AMBER);
+      tft.drawCircle(cx, cy,  6, C_AMBER);
       tft.drawFastVLine(cx, cy - 20, 40, C_AMBER);
       tft.drawFastHLine(cx - 20, cy, 40, C_AMBER);
 
@@ -383,8 +386,9 @@ void drawGateScreen() {
       break;
     }
     case GS_OPEN: {
-      // Open padlock: arc (top half of circle) + body
-      tft.drawArc(cx, cy - 6, 18, 12, 180, 360, C_GREEN, C_CARD);
+      // Open padlock — shackle drawn as open arc using segments
+      tft.drawCircle(cx, cy - 6, 18, C_GREEN);
+      tft.fillRect(cx - 19, cy - 6, 38, 20, C_CARD); // erase lower half of circle
       tft.fillRoundRect(cx - 18, cy + 6, 36, 28, 4, C_GREEN);
       tft.fillCircle(cx, cy + 17, 5, C_WHITE);
 
@@ -393,8 +397,8 @@ void drawGateScreen() {
       break;
     }
     case GS_GOODBYE: {
-      // Closed padlock
-      tft.drawArc(cx, cy - 6, 18, 12, 0, 360, C_RED, C_CARD);
+      // Closed padlock — full circle shackle
+      tft.drawCircle(cx, cy - 6, 18, C_RED);
       tft.fillRoundRect(cx - 18, cy + 6, 36, 28, 4, C_RED);
       tft.fillCircle(cx, cy + 17, 5, C_WHITE);
 
@@ -601,9 +605,9 @@ void drawAudio() {
   }
 
   // Playback status badge
-  const char* statusStr = audioPlaying ? "▶  Playing"
-                        : audioStarted ? "⏸  Paused"
-                        : "⏹  Stopped";
+  const char* statusStr = audioPlaying ? "Playing"
+                        : audioStarted ? "Paused"
+                        : "Stopped";
   uint16_t statusCol = audioPlaying ? C_GREEN : C_DIM;
   txt(statusStr, W / 2, BODY_Y + 70, 2, statusCol, C_BG, MC_DATUM);
 
