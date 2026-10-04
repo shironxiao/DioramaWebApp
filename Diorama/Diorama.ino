@@ -474,84 +474,121 @@ void pollGate() {
 //
 //  Layout (480×284 body, y origin = HDR_H=36):
 //
-//  y  36..78  : Mode tabs  [ Basic ][ Sound ][ Adaptive ]  (3 tabs, 150×38 each)
-//  y  82..138 : Power card (on/off toggle + current mode label)
-//  y 142..162 : "Brightness" label + value
-//  y 163..199 : Brightness slider
-//  y 206..226 : Mode-specific label
-//  y 230..282 : Mode-specific content (level bar OR swatch)  / Sens slider
+//  y  36..76  : Mode tabs  [ Basic ][ Colorful ][ Sound ][ Adaptive ]  (4 tabs)
+//  y  80..132 : Power card (on/off toggle + current mode label)
+//  y 136..156 : "Brightness" label + value
+//  y 160..196 : Brightness slider
+//  y 200..319 : Mode-specific panel
 //
 // ─────────────────────────────────────────────────────────────────────────────
 
-// Mode tab row  (3 tabs: Basic, Sound, Adaptive — Colorful is web-only on TFT)
-// Tab layout: each 150 px wide, gap 5 px, start x=10
-// Total = 3×150 + 2×5 = 460 px  fits in 480
+// Mode tabs — 4 tabs, each 116px wide with 3px gap, starting x=4
+// 4×116 + 3×3 = 473px — fits in 480
 void drawModeTabs() {
-  const char* labels[3] = { "Basic", "Sound", "Adaptive" };
-  const Mode  modes[3]  = { M_BASIC, M_SOUND, M_ADAPT };
-  for (int i = 0; i < 3; i++) {
+  const char* labels[4] = { "Basic", "Colorful", "Sound", "Adaptive" };
+  const Mode  modes[4]  = { M_BASIC, M_COLOR, M_SOUND, M_ADAPT };
+  for (int i = 0; i < 4; i++) {
     bool act = (tftMode == modes[i]);
-    int  bx  = 10 + i * 157;
-    btn(bx, BODY_Y + 2, 150, 36, labels[i], act, C_AMBER);
+    int  bx  = 4 + i * 119;
+    btn(bx, BODY_Y + 2, 116, 36, labels[i], act, C_AMBER);
   }
 }
 
 // Power toggle card
 void drawPowerCard() {
-  int cy = BODY_Y + 44;
-  card(10, cy, 460, 52, C_CARD, lightsOn ? C_AMBER : C_BORDER);
+  int cy = BODY_Y + 42;
+  card(10, cy, 460, 48, C_CARD, lightsOn ? C_AMBER : C_BORDER);
 
-  // Icon circle
-  tft.fillCircle(40, cy + 26, 16, lightsOn ? C_AMBER : C_TRACK);
-  // Simple power symbol (circle + vertical line on top)
-  tft.drawCircle(40, cy + 26, 10, lightsOn ? C_WHITE : C_DIM);
-  tft.drawFastVLine(40, cy + 16, 10, lightsOn ? C_WHITE : C_DIM);
+  tft.fillCircle(36, cy + 24, 14, lightsOn ? C_AMBER : C_TRACK);
+  tft.drawCircle(36, cy + 24,  9, lightsOn ? C_WHITE : C_DIM);
+  tft.drawFastVLine(36, cy + 15, 9, lightsOn ? C_WHITE : C_DIM);
 
-  // Label
   txt(lightsOn ? "Lights  ON" : "Lights  OFF",
-      68, cy + 14, 4, C_TEXT, C_CARD, TL_DATUM);
-  txt(lightMode.c_str(), 68, cy + 36, 2, C_DIM, C_CARD, TL_DATUM);
+      60, cy + 10, 4, C_TEXT, C_CARD, TL_DATUM);
+  txt(lightMode.c_str(), 60, cy + 30, 2, C_DIM, C_CARD, TL_DATUM);
 
-  // Toggle switch
-  toggleSw(408, cy + 15, lightsOn, C_AMBER);
+  toggleSw(410, cy + 13, lightsOn, C_AMBER);
 }
 
 // Brightness row
 void drawBrightnessRow() {
-  int ly = BODY_Y + 108;
-  tft.fillRect(0, ly, W, 70, C_BG);
+  int ly = BODY_Y + 100;
+  tft.fillRect(0, ly, W, 64, C_BG);
   label("Brightness", SL_X0, ly);
   drawPct(W - 10, ly + 4, brightness, C_AMBER);
-  drawSlider(ly + 36, brightness, C_AMBER);
+  drawSlider(ly + 34, brightness, C_AMBER);
+}
+
+// ── Colorful panel ────────────────────────────────────────────────────────────
+//  y 170..190 : "Pick colour:" + selected swatch
+//  y 194..230 : Row 1 of palette (6 swatches, 36px diameter circles, cx 38+i*68)
+//  y 234..270 : Row 2 of palette
+//  y 276..310 : Apply zone buttons [ALL][Left][Right][Center]
+
+void drawColorPanel() {
+  int py = BODY_Y + 168;
+  tft.fillRect(0, py, W, H - py, C_BG);
+
+  // Selected colour swatch + label
+  label("Pick colour:", SL_X0, py);
+  tft.fillRoundRect(120, py - 2, 34, 20, 4, c565(cur));
+  tft.drawRoundRect(120, py - 2, 34, 20, 4, C_TEXT);
+  char hex[8]; snprintf(hex, sizeof(hex), "#%02X%02X%02X", cur.r, cur.g, cur.b);
+  txt(hex, 162, py, 2, C_TEXT, C_BG, TL_DATUM);
+
+  // Palette: 2 rows × 6 swatches
+  // Row 1: PAL[0..5]   cy = py+32
+  // Row 2: PAL[6..11]  cy = py+70
+  for (int i = 0; i < 12; i++) {
+    int row = i / 6;
+    int col = i % 6;
+    int cx2 = 38 + col * 68;
+    int cy2 = py + 32 + row * 42;
+    uint16_t col565 = c565(PAL[i]);
+    // Highlight selected
+    bool sel = (cur.r == PAL[i].r && cur.g == PAL[i].g && cur.b == PAL[i].b);
+    tft.fillCircle(cx2, cy2, 16, col565);
+    tft.drawCircle(cx2, cy2, 16, sel ? C_TEXT : C_BORDER);
+    if (sel) tft.drawCircle(cx2, cy2, 18, C_TEXT);
+  }
+
+  // Apply-zone buttons [ALL] [Left] [Right] [Center]
+  // y = py+118, height=32, each 110px wide with 3px gap
+  const char* zn[4] = { "ALL", "Left", "Right", "Center" };
+  for (int i = 0; i < 4; i++) {
+    bool act = (lastApplied == i);
+    btn(4 + i * 119, py + 118, 115, 32, zn[i], act, C_AMBER);
+  }
 }
 
 // Mode-specific lower panel
 void drawModePanel() {
-  int py = BODY_Y + 184;
+  int py = BODY_Y + 168;
   tft.fillRect(0, py, W, H - py, C_BG);
 
   if (tftMode == M_BASIC) {
-    // Nothing extra — brightness slider is sufficient
     label("Steady warm light. Adjust brightness above.", SL_X0, py + 4);
+    return;
+  }
+
+  if (tftMode == M_COLOR) {
+    drawColorPanel();
     return;
   }
 
   if (tftMode == M_SOUND) {
     label("Sound level", SL_X0, py);
-    // Level bar
     int bw = (int)(lvl * (SL_X1 - SL_X0));
     tft.fillRect(SL_X0, py + 18, SL_X1 - SL_X0, 20, C_TRACK);
     if (bw > 0) tft.fillRect(SL_X0, py + 18, bw, 20, c565(live));
-    // Sensitivity slider
     label("Sensitivity", SL_X0, py + 50);
     drawPct(W - 10, py + 54, sens, C_AMBER);
-    drawSlider(py + 82, sens, C_AMBER);
+    drawSlider(py + 80, sens, C_AMBER);
     return;
   }
 
   if (tftMode == M_ADAPT) {
     label("Ambient colour sensor — auto-adapting", SL_X0, py + 4);
-    // Colour swatch
     tft.fillRoundRect(SL_X0, py + 24, SL_X1 - SL_X0, 56, 8, c565(live));
     tft.drawRoundRect(SL_X0, py + 24, SL_X1 - SL_X0, 56, 8, C_BORDER);
     return;
@@ -654,7 +691,7 @@ void updateLive() {
     setAll(live);
     // Refresh level bar if on lights page
     if (page == P_LIGHTS && tftMode == M_SOUND) {
-      int py = BODY_Y + 184;
+      int py = BODY_Y + 168;
       int bw = (int)(lvl * (SL_X1 - SL_X0));
       tft.fillRect(SL_X0, py + 18, SL_X1 - SL_X0, 20, C_TRACK);
       if (bw > 0) tft.fillRect(SL_X0, py + 18, bw, 20, c565(live));
@@ -780,17 +817,16 @@ void onPress(int x, int y) {
   if (page == P_LIGHTS) {
     // Mode tabs row  y = BODY_Y+2 .. BODY_Y+38
     if (inRect(x, y, 0, BODY_Y, W, 40)) {
-      const Mode modes[3] = { M_BASIC, M_SOUND, M_ADAPT };
-      for (int i = 0; i < 3; i++) {
-        if (inRect(x, y, 10 + i * 157, BODY_Y + 2, 150, 36)) {
+      const Mode modes[4] = { M_BASIC, M_COLOR, M_SOUND, M_ADAPT };
+      for (int i = 0; i < 4; i++) {
+        if (inRect(x, y, 4 + i * 119, BODY_Y + 2, 116, 36)) {
           if (tftMode != modes[i]) {
             tftMode = modes[i];
-            // Sync lightMode string with web app
-            if (tftMode == M_BASIC)  lightMode = "Basic";
-            if (tftMode == M_SOUND)  lightMode = "Sound Reactive";
-            if (tftMode == M_ADAPT)  lightMode = "Color Adaptive";
+            if (tftMode == M_BASIC)  { lightMode = "Basic";          setAll({255,180,90}); }
+            if (tftMode == M_COLOR)  { lightMode = "Colorful"; }
+            if (tftMode == M_SOUND)  { lightMode = "Sound Reactive"; }
+            if (tftMode == M_ADAPT)  { lightMode = "Color Adaptive"; }
             Serial.printf("[MODE] %s\n", lightMode.c_str());
-            if (tftMode == M_BASIC) setAll({255, 180, 90});
             drawLights();
           }
           return;
@@ -798,8 +834,8 @@ void onPress(int x, int y) {
       }
     }
 
-    // Power toggle card  y = BODY_Y+44 .. BODY_Y+96
-    if (inRect(x, y, 10, BODY_Y + 44, 460, 52)) {
+    // Power toggle card  y = BODY_Y+42 .. BODY_Y+90
+    if (inRect(x, y, 10, BODY_Y + 42, 460, 48)) {
       lightsOn = !lightsOn;
       Serial.printf("[LIGHTS] %s\n", lightsOn ? "ON" : "OFF");
       pushZones();
@@ -807,14 +843,55 @@ void onPress(int x, int y) {
       return;
     }
 
-    // Brightness slider zone  y = BODY_Y+145 .. BODY_Y+185
-    if (inRect(x, y, SL_X0, BODY_Y + 126, SL_X1 - SL_X0, 56)) {
+    // Brightness slider zone  y = BODY_Y+116 .. BODY_Y+160
+    if (inRect(x, y, SL_X0, BODY_Y + 116, SL_X1 - SL_X0, 52)) {
       dragging = D_BR; onDrag(x); return;
     }
 
-    // Sensitivity slider (Sound mode only)
+    // ── Colorful mode touch zones ─────────────────────────────────────────
+    if (tftMode == M_COLOR) {
+      int py = BODY_Y + 168;
+
+      // Palette circles — 2 rows × 6, same coords as drawColorPanel()
+      for (int i = 0; i < 12; i++) {
+        int row = i / 6;
+        int col = i % 6;
+        int cx2 = 38 + col * 68;
+        int cy2 = py + 32 + row * 42;
+        if ((long)(x - cx2)*(x - cx2) + (long)(y - cy2)*(y - cy2) <= 18*18) {
+          cur = PAL[i];
+          Serial.printf("[COLOR] Selected #%02X%02X%02X\n", cur.r, cur.g, cur.b);
+          drawColorPanel();
+          return;
+        }
+      }
+
+      // Apply-zone buttons  y = py+118 .. py+150
+      if (inRect(x, y, 0, py + 118, W, 34)) {
+        for (int i = 0; i < 4; i++) {
+          if (inRect(x, y, 4 + i * 119, py + 118, 115, 32)) {
+            // Apply cur colour to zone
+            if      (i == 0) { zone[0] = zone[1] = zone[2] = cur; }
+            else if (i == 1) { zone[0] = cur; }
+            else if (i == 2) { zone[1] = cur; }
+            else if (i == 3) { zone[2] = cur; }
+            lastApplied = i;
+            lightsOn = true;
+            pushZones();
+            const char* zn[4] = { "ALL", "Left", "Right", "Center" };
+            Serial.printf("[COLOR] Applied #%02X%02X%02X to %s\n",
+                          cur.r, cur.g, cur.b, zn[i]);
+            drawColorPanel();
+            return;
+          }
+        }
+      }
+      return;
+    }
+
+    // Sensitivity slider (Sound mode only)  y = py+62 .. py+118
     if (tftMode == M_SOUND) {
-      int py = BODY_Y + 184;
+      int py = BODY_Y + 168;
       if (inRect(x, y, SL_X0, py + 62, SL_X1 - SL_X0, 56)) {
         dragging = D_SENS; onDrag(x); return;
       }
@@ -829,8 +906,8 @@ void onDrag(int x) {
       if (p != brightness) {
         brightness = p;
         Serial.printf("[LIGHTS] Brightness %d%%\n", brightness);
-        drawPct(W - 10, BODY_Y + 112, p, C_AMBER);
-        drawSlider(BODY_Y + 144, p, C_AMBER);
+        drawPct(W - 10, BODY_Y + 104, p, C_AMBER);
+        drawSlider(BODY_Y + 134, p, C_AMBER);
         pushZones();
       }
       break;
@@ -912,10 +989,11 @@ void handleMode() {
     lightMode.replace("+", " ");  // URL-encoded spaces
     Serial.printf("[HTTP /api/mode] mode=%s\n", lightMode.c_str());
     // Sync TFT mode tab
-    if (lightMode == "Basic")         tftMode = M_BASIC;
+    if (lightMode == "Basic")                tftMode = M_BASIC;
+    else if (lightMode == "Colorful")        tftMode = M_COLOR;
     else if (lightMode == "Sound Reactive")  tftMode = M_SOUND;
     else if (lightMode == "Color Adaptive")  tftMode = M_ADAPT;
-    else                              tftMode = M_BASIC; // Colorful → show Basic on TFT
+    else                                     tftMode = M_BASIC;
     if (tftMode == M_BASIC) setAll({255, 180, 90});
     if (page == P_LIGHTS && gateState == GS_OPEN) drawLights();
   }
