@@ -48,6 +48,16 @@
 #define I2S_DOUT  22
 #define MIC_PIN   34   // ADC1 analog sound sensor
 
+// =====================================================
+// FINGERPRINT / GATE PINS
+// =====================================================
+// Connect the fingerprint sensor's TX/RX here.
+// Touch-to-scan fallback is used if FINGERPRINT_SIMULATE = true.
+#define FINGERPRINT_TX   16   // ESP32 RX2 ← sensor TX
+#define FINGERPRINT_RX   17   // ESP32 TX2 → sensor RX
+#define GATE_SERVO_PIN   15   // Servo or solenoid driving the physical gate
+#define FINGERPRINT_SIMULATE true  // Set false when real sensor is wired
+
 // Touch calibration stored in SPIFFS.
 // Change CALIBRATION_FILE to force a fresh calibration.
 // Set REPEAT_CAL true to always recalibrate on boot.
@@ -170,6 +180,166 @@ bool wasTouched = false;
 void onDrag(int x);   // forward declaration
 
 // =====================================================
+// GATE STATE MACHINE
+// =====================================================
+
+GateState gateState    = GS_WAITING;
+uint32_t  gateEventMs  = 0;   // timestamp of last gate event
+
+// Durations
+const uint32_t SCAN_DURATION_MS    = 2000;   // fingerprint scan animation time
+const uint32_t GOODBYE_DURATION_MS = 3000;   // goodbye message hold time
+
+// Forward declarations
+void drawGateScreen();
+void enterGateState(GateState next);
+
+// ── Physical gate actuator (servo / solenoid) ─────────────────────────────
+void setGateActuator(bool open) {
+  // Replace with your servo/relay logic, e.g.:
+  // myServo.write(open ? 90 : 0);
+  // digitalWrite(GATE_RELAY_PIN, open ? HIGH : LOW);
+  Serial.printf("[GATE] Actuator: %s\n", open ? "OPEN" : "CLOSED");
+}
+
+// ── State transitions ─────────────────────────────────────────────────────
+void enterGateState(GateState next) {
+  gateState   = next;
+  gateEventMs = millis();
+
+  switch (next) {
+    case GS_WAITING:
+      Serial.println("[GATE] State: WAITING — Gate closed, awaiting fingerprint.");
+      setGateActuator(false);
+      drawGateScreen();
+      break;
+
+    case GS_SCANNING:
+      Serial.println("[GATE] State: SCANNING — Fingerprint sensor reading...");
+      drawGateScreen();
+      break;
+
+    case GS_OPEN:
+      Serial.println("[GATE] State: OPEN — Fingerprint verified! Gate opened, UI unlocked.");
+      setGateActuator(true);
+      drawGateScreen();
+      // After showing welcome briefly, draw the normal UI
+      delay(1500);
+      drawHeader();
+      drawLights();
+      break;
+
+    case GS_GOODBYE:
+      Serial.println("[GATE] State: GOODBYE — Gate closed, showing goodbye message.");
+      setGateActuator(false);
+      drawGateScreen();
+      break;
+  }
+}
+
+// ── Gate screen renderer ──────────────────────────────────────────────────
+void drawGateScreen() {
+  tft.fillScreen(C_BG);
+
+  // Top accent bar (green)
+  tft.fillRect(0, 0, W, 4, C_GREEN);
+
+  // Park name
+  text("Silvestre del Moro Park", W / 2, 30, 2, C_DIM, C_BG, MC_DATUM);
+
+  // Central icon area
+  int cx = W / 2, cy = 130;
+  tft.fillCircle(cx, cy, 50, C_CARD);
+  tft.drawCircle(cx, cy, 50, C_GREEN);
+  tft.drawCircle(cx, cy, 46, C_BORDER);
+
+  switch (gateState) {
+    case GS_WAITING:
+      // Fingerprint icon (approximated with circles + lines)
+      tft.drawCircle(cx,     cy,     22, C_GREEN);
+      tft.drawCircle(cx,     cy,     14, C_GREEN);
+      tft.drawCircle(cx,     cy,      6, C_GREEN);
+      tft.drawFastVLine(cx,  cy - 22, 44, C_GREEN);
+      tft.drawFastHLine(cx - 22, cy,  44, C_GREEN);
+      text("Hi! Welcome!", W / 2, 200, 4, C_TEXT, C_BG, MC_DATUM);
+      text("Please scan your fingerprint to enter.", W / 2, 228, 2, C_DIM, C_BG, MC_DATUM);
+      // Tap-to-scan hint
+      card(W / 2 - 110, 260, 220, 46, C_GREEN, C_GREEN);
+      text("TAP HERE TO SCAN", W / 2, 283, 2, C_ONACC, C_GREEN, MC_DATUM);
+      break;
+
+    case GS_SCANNING:
+      // Animated-style scanning indicator
+      tft.drawCircle(cx, cy, 22, C_GREEN);
+      tft.drawCircle(cx, cy, 14, C_AMBER);
+      tft.drawCircle(cx, cy,  6, C_GREEN);
+      tft.drawFastVLine(cx, cy - 22, 44, C_AMBER);
+      tft.drawFastHLine(cx - 22, cy, 44, C_AMBER);
+      text("Scanning...", W / 2, 200, 4, C_AMBER, C_BG, MC_DATUM);
+      text("Verifying your fingerprint, please wait...", W / 2, 228, 2, C_DIM, C_BG, MC_DATUM);
+      // Progress bar
+      tft.fillRoundRect(W / 2 - 110, 265, 220, 12, 6, C_TRACK);
+      {
+        uint32_t elapsed = millis() - gateEventMs;
+        int fw = constrain((int)(220L * elapsed / SCAN_DURATION_MS), 0, 220);
+        if (fw > 0) tft.fillRoundRect(W / 2 - 110, 265, fw, 12, 6, C_GREEN);
+      }
+      break;
+
+    case GS_OPEN:
+      // Unlock icon (open padlock represented by open arc)
+      tft.drawCircle(cx, cy - 8, 18, C_GREEN);
+      tft.fillRect(cx - 18, cy - 8, 36, 30, C_BG);  // erase bottom half of circle
+      tft.fillRoundRect(cx - 18, cy + 4, 36, 26, 4, C_GREEN);
+      tft.fillCircle(cx, cy + 14, 5, C_ONACC);
+      text("Welcome!", W / 2, 200, 4, C_GREEN, C_BG, MC_DATUM);
+      text("You may now interact with the diorama.", W / 2, 228, 2, C_DIM, C_BG, MC_DATUM);
+      break;
+
+    case GS_GOODBYE:
+      // Lock icon (closed padlock)
+      tft.drawCircle(cx, cy - 8, 18, C_RED);
+      tft.fillRoundRect(cx - 18, cy + 4, 36, 26, 4, C_RED);
+      tft.fillCircle(cx, cy + 14, 5, C_ONACC);
+      // Draw closed top arc by drawing two short lines
+      tft.drawCircle(cx, cy - 8, 18, C_RED);
+      tft.fillRect(cx - 19, cy - 8, 38, 18, C_BG);    // hide lower half of circle
+      tft.drawArc(cx, cy - 8, 18, 12, 180, 360, C_RED, C_BG); // top half arc only
+      text("Goodbye!", W / 2, 200, 4, C_RED, C_BG, MC_DATUM);
+      text("Thank you for visiting.", W / 2, 228, 2, C_DIM, C_BG, MC_DATUM);
+      break;
+  }
+}
+
+// ── Fingerprint polling (simulation: touch the scan button) ──────────────
+void pollGate() {
+  // Timed transitions
+  if (gateState == GS_SCANNING) {
+    if (millis() - gateEventMs >= SCAN_DURATION_MS) {
+      // Scan complete → open gate
+      enterGateState(GS_OPEN);
+    } else {
+      // Refresh progress bar during scan
+      uint32_t elapsed = millis() - gateEventMs;
+      int fw = constrain((int)(220L * elapsed / SCAN_DURATION_MS), 0, 220);
+      if (fw > 0) tft.fillRoundRect(W / 2 - 110, 265, fw, 12, 6, C_GREEN);
+    }
+    return;
+  }
+
+  if (gateState == GS_GOODBYE) {
+    if (millis() - gateEventMs >= GOODBYE_DURATION_MS) {
+      enterGateState(GS_WAITING);
+    }
+    return;
+  }
+
+  // TODO: When real fingerprint sensor is wired, replace the
+  // FINGERPRINT_SIMULATE block below with actual sensor read:
+  //   if (finger.getImage() == FINGERPRINT_OK) { ... }
+}
+
+// =====================================================
 // HARDWARE HOOKS
 // =====================================================
 
@@ -283,7 +453,14 @@ void drawPct(int xRight, int y, int val, uint16_t col) {
 void drawHeader() {
   tft.fillRect(0, 0, W, HDR_H, C_HDR);
   tft.drawFastHLine(0, HDR_H - 1, W, C_BORDER);
-  text("Silvestre del Moro Park", 8, HDR_H / 2, 2, C_TEXT, C_HDR, ML_DATUM);
+
+  // Left tap zone: "Exit" to close the gate when open
+  if (gateState == GS_OPEN) {
+    tft.fillRect(0, 0, 72, HDR_H - 1, C_RED);
+    text("Exit", 36, HDR_H / 2, 2, C_ONACC, C_RED, MC_DATUM);
+  }
+
+  text("Silvestre del Moro Park", 82, HDR_H / 2, 2, C_TEXT, C_HDR, ML_DATUM);
 
   bool a = (page == P_LIGHTS), b = (page == P_AUDIO);
   tft.fillRect(250, 0, 105, HDR_H - 1, a ? C_AMBER : C_HDR);
@@ -574,6 +751,32 @@ void applyColor(int i) {
 // =====================================================
 
 void onPress(int x, int y) {
+  // ── Gate screen intercept ─────────────────────────────────────────────────
+  // When gate is not open, all touches are handled by the gate screen.
+  if (gateState != GS_OPEN) {
+    if (gateState == GS_WAITING) {
+      // User tapped the "TAP HERE TO SCAN" button
+      if (inRect(x, y, W / 2 - 110, 260, 220, 46)) {
+        Serial.println("[GATE] Touch: Biometric scan triggered.");
+        enterGateState(GS_SCANNING);
+      }
+    }
+    // All other touches ignored while gate is closed/scanning/goodbye
+    return;
+  }
+
+  // ── Close gate: long-press anywhere on header (left 80 px) ───────────────
+  // A dedicated "Exit" tap zone at the far left of the header lets the
+  // physical operator close the gate from the TFT.
+  if (y < HDR_H && x < 80) {
+    Serial.println("[GATE] Touch: Close gate requested from TFT.");
+    enterGateState(GS_GOODBYE);
+    // Transition to waiting handled by pollGate() after GOODBYE_DURATION_MS
+    return;
+  }
+
+  // ── Normal page handling (gate is open) ──────────────────────────────────
+
   // Header: page tabs
   if (y < HDR_H) {
     Page np = (x >= 355) ? P_AUDIO : (x >= 250 ? P_LIGHTS : page);
@@ -815,15 +1018,22 @@ void setup() {
   // pinMode(BLUE_PIN,  OUTPUT);
   // pinMode(FOUNTAIN_PIN, OUTPUT);
 
-  // Initial state
-  setAll({255, 180, 90});
-  drawHeader();
-  drawLights();
+  // Initial state — start at gate waiting screen
+  enterGateState(GS_WAITING);
 }
 
 void loop() {
   static uint32_t lt = 0;
+
+  // Gate polling runs at all times
+  pollGate();
+
+  // Touch polling — gate screen handles its own touch logic inside onPress
   if (millis() - lt >= 25) { lt = millis(); pollTouch(); }
-  updateLive();
-  autoAdvance();
+
+  // Normal diorama logic only runs when the gate is open
+  if (gateState == GS_OPEN) {
+    updateLive();
+    autoAdvance();
+  }
 }

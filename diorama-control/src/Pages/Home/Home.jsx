@@ -14,7 +14,7 @@ import DioramaCanvas from '../../components/DioramaCanvas';
 import { sendAudioPlay, sendAudioPause } from '../../services/esp32Api';
 import './Home.css';
 
-export default function Home({ appState, setAppState, setActiveTab, showToast }) {
+export default function Home({ appState, setAppState, setActiveTab, showToast, onGateClose }) {
   const {
     lightsOn, brightness, lightingMode,
     fountainOn, fountainStrength, fountainColor,
@@ -24,15 +24,22 @@ export default function Home({ appState, setAppState, setActiveTab, showToast })
 
   const [isScanning, setIsScanning] = useState(false);
 
+  // When the gate is open, tapping the biometric button closes it
   const handleBiometricScan = () => {
     if (isScanning) return;
+    if (gateOpen) {
+      // Close gate — delegate to App-level handler
+      onGateClose();
+      return;
+    }
+    // Gate is closed — shouldn't normally be reachable here since the lock screen
+    // is shown at the App level, but handle gracefully just in case
     setIsScanning(true);
     showToast('🔍 Biometric sensor scanning fingerprint...');
     setTimeout(() => {
-      const newGateState = !gateOpen;
-      setAppState((prev) => ({ ...prev, gateOpen: newGateState }));
+      setAppState((prev) => ({ ...prev, gateOpen: true }));
       setIsScanning(false);
-      showToast(newGateState ? '✅ Fingerprint verified! Gate opened.' : '🔒 Fingerprint verified! Gate closed.');
+      showToast('✅ Fingerprint verified! Gate opened.');
     }, 1800);
   };
 

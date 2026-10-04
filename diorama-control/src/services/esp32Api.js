@@ -100,6 +100,29 @@ export const sendControlSource = (source) => {
   return sendEspCommand('/api/control-source', { source });
 };
 
+/**
+ * Poll the ESP32 for the current gate state.
+ * Expects ESP32 to return: { "open": true/false }
+ * Returns null if the ESP32 is unreachable.
+ */
+export const getGateStatus = async () => {
+  const isSelfHosted =
+    window.location.hostname === esp32Ip ||
+    (window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1');
+  const url = isSelfHosted ? '/api/gate/status' : `http://${esp32Ip}/api/gate/status`;
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 2000);
+    const response = await fetch(url, { signal: controller.signal, mode: 'cors' });
+    clearTimeout(timeoutId);
+    if (!response.ok) return null;
+    const data = await response.json();
+    return typeof data.open === 'boolean' ? data.open : null;
+  } catch {
+    return null;
+  }
+};
+
 export const scanColorSensor = async () => {
   const isSelfHosted =
     window.location.hostname === esp32Ip ||

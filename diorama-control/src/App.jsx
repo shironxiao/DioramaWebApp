@@ -1,11 +1,11 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
+import { Fingerprint, Lock } from 'lucide-react';
 import Navigation from './components/Navigation';
 import Home from './Pages/Home/Home';
 import LightAndColor from './Pages/Light&Color/Light&Color';
 import Fountain from './Pages/Fountain/Fountain';
 import Audio from './Pages/Audio/Audio';
 import SettingsPage from './Pages/Settings/Settings';
-import LoginRegister from './Pages/Login&Register/LoginRegister';
 import AboutPage from './Pages/About/About';
 import {
   sendLightControl,
@@ -16,8 +16,7 @@ import {
   sendVolumeControl,
   sendSoundReactive,
   sendForceSensorControl,
-  sendAudioPlay,
-  sendAudioPause
+  getGateStatus
 } from './services/esp32Api';
 import './App.css';
 
@@ -25,9 +24,14 @@ function App() {
   const [activeTab, setActiveTab] = useState('home');
   const [toastMessage, setToastMessage] = useState(null);
 
-  // Skip login — go directly to the app
-  const [isLoggedIn, setIsLoggedIn] = useState(true);
-  const [user, setUser] = useState({ name: 'Guest' });
+  // Gate-based access state
+  // 'waiting'  → gate closed, showing auth prompt
+  // 'scanning' → fingerprint scan in progress (web simulation)
+  // 'open'     → gate open, UI unlocked
+  // 'goodbye'  → gate just closed, showing goodbye message briefly
+  const [gateState, setGateState] = useState('waiting');
+  const goodbyeTimer = useRef(null);
+  const pollTimer    = useRef(null);
 
   // Shared application state
   const [appState, setAppState] = useState({
@@ -53,22 +57,76 @@ function App() {
     volume: 70,
 
     circleColor: '#D4B78C',
-    colorSensorTarget: 'All', // 'All', 'F1', 'F2', 'Center'
+    colorSensorTarget: 'All',
     rfidGateEnabled: true,
     gateOpen: false,
     plazaRotationMode: 'Sensor'
   });
 
-  // Wrapper for updating state and syncing with physical ESP32
+  // ── Gate helpers ──────────────────────────────────────────────────────────
+
+  const openGate = () => {
+    setGateState('open');
+    setAppState((prev) => ({ ...prev, gateOpen: true }));
+    sendGateControl(true);
+    showToast('✅ Fingerprint verified! Welcome — you may now interact with the diorama.');
+  };
+
+  const closeGate = () => {
+    if (goodbyeTimer.current) clearTimeout(goodbyeTimer.current);
+    setGateState('goodbye');
+    setAppState((prev) => ({ ...prev, gateOpen: false }));
+    sendGateControl(false);
+    showToast('👋 Goodbye! Thank you for visiting.');
+    // After 3 s return to waiting/auth screen
+    goodbyeTimer.current = setTimeout(() => {
+      setGateState('waiting');
+    }, 3000);
+  };
+
+  // Web-side biometric simulation (tap → 1.8 s scan → open/close gate)
+  const handleWebBiometricScan = () => {
+    if (gateState === 'scanning') return;
+    if (gateState === 'open') {
+      // Close gate
+      closeGate();
+      return;
+    }
+    setGateState('scanning');
+    showToast('🔍 Biometric sensor scanning fingerprint...');
+    setTimeout(() => {
+      openGate();
+    }, 1800);
+  };
+
+  // ── Poll ESP32 for gate status every 3 s ─────────────────────────────────
+  useEffect(() => {
+    const poll = async () => {
+      const isOpen = await getGateStatus();
+      if (isOpen === true && gateState !== 'open') {
+        openGate();
+      } else if (isOpen === false && gateState === 'open') {
+        closeGate();
+      }
+    };
+
+    pollTimer.current = setInterval(poll, 3000);
+    return () => {
+      clearInterval(pollTimer.current);
+      if (goodbyeTimer.current) clearTimeout(goodbyeTimer.current);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [gateState]);
+
+  // ── State update wrapper ──────────────────────────────────────────────────
+
   const updateAppState = (updater) => {
     setAppState((prev) => {
       const next = typeof updater === 'function' ? updater(prev) : { ...prev, ...updater };
 
-      // Lights: on/off OR brightness changed
       if (next.lightsOn !== prev.lightsOn || next.brightness !== prev.brightness) {
         sendLightControl(next.lightsOn, next.brightness);
       }
-      // Fountain: on/off OR either strength changed
       if (
         next.fountainOn !== prev.fountainOn ||
         next.fountainStrength !== prev.fountainStrength ||
@@ -76,31 +134,21 @@ function App() {
       ) {
         sendFountainControl(next.fountainOn, next.fountainStrength, next.fountainAuxStrength);
       }
-      // Fountain left color changed — send as primary color
       if (next.fountainColor !== prev.fountainColor) {
         sendColorControl(next.fountainColor, 'left');
       }
-      // Fountain right color changed — send separately
       if (next.fountainAuxColor !== prev.fountainAuxColor) {
         sendColorControl(next.fountainAuxColor, 'right');
       }
-      // Gate open/close
-      if (next.gateOpen !== prev.gateOpen) {
-        sendGateControl(next.gateOpen);
-      }
-      // Lighting mode changed
       if (next.lightingMode !== prev.lightingMode) {
         sendModeControl(next.lightingMode);
       }
-      // Volume changed
       if (next.volume !== prev.volume) {
         sendVolumeControl(next.volume);
       }
-      // Sound reactive toggle OR intensity changed
       if (next.soundReactiveOn !== prev.soundReactiveOn || next.reactionIntensity !== prev.reactionIntensity) {
         sendSoundReactive(next.soundReactiveOn, next.reactionIntensity);
       }
-      // Force sensor enable/disable
       if (next.fountainForceSensorOn !== prev.fountainForceSensorOn) {
         sendForceSensorControl(next.fountainForceSensorOn);
       }
@@ -111,41 +159,75 @@ function App() {
 
   const showToast = (msg) => {
     setToastMessage(msg);
-    setTimeout(() => setToastMessage(null), 3000);
+    setTimeout(() => setToastMessage(null), 3500);
   };
 
-  const handleLogout = () => {
-    localStorage.removeItem('diorama_logged_in');
-    localStorage.removeItem('diorama_user');
-    setIsLoggedIn(false);
-    setUser({ name: '' });
-    showToast('Logged out of Silvestre del Moro Park');
-  };
+  // ── Gate Lock Overlay ─────────────────────────────────────────────────────
 
-  const handleLoginSuccess = (userName) => {
-    localStorage.setItem('diorama_logged_in', 'true');
-    localStorage.setItem('diorama_user', JSON.stringify({ name: userName }));
-    setUser({ name: userName });
-    setIsLoggedIn(true);
-    setActiveTab('home');
-  };
+  const isGateOpen = gateState === 'open';
+  const isScanning = gateState === 'scanning';
+  const isGoodbye  = gateState === 'goodbye';
 
-  if (!isLoggedIn) {
+  if (!isGateOpen) {
     return (
-      <>
+      <div className="gate-lock-screen">
         {toastMessage && (
           <div className="toast-banner fixed-toast">
             <span>{toastMessage}</span>
           </div>
         )}
-        <LoginRegister onLoginSuccess={handleLoginSuccess} showToast={showToast} />
-      </>
+
+        <div className="gate-lock-card">
+          {/* Park name */}
+          <p className="gate-lock-park-name">Silvestre del Moro Park</p>
+
+          {/* Icon */}
+          <div className={`gate-lock-icon-ring ${isScanning ? 'scanning' : ''} ${isGoodbye ? 'goodbye' : ''}`}>
+            {isGoodbye
+              ? <Lock size={40} strokeWidth={1.5} />
+              : <Fingerprint size={40} strokeWidth={1.5} className={isScanning ? 'fp-scanning' : ''} />
+            }
+          </div>
+
+          {/* Message */}
+          <h1 className="gate-lock-title">
+            {isGoodbye
+              ? 'Goodbye!'
+              : isScanning
+              ? 'Verifying...'
+              : 'Welcome!'}
+          </h1>
+
+          <p className="gate-lock-subtitle">
+            {isGoodbye
+              ? 'Thank you for visiting Silvestre del Moro Park.'
+              : isScanning
+              ? 'Scanning your fingerprint, please wait...'
+              : 'Please scan your fingerprint to enter.'}
+          </p>
+
+          {/* Scan button — only visible when waiting */}
+          {!isScanning && !isGoodbye && (
+            <button
+              className="gate-lock-scan-btn"
+              onClick={handleWebBiometricScan}
+            >
+              <Fingerprint size={20} />
+              <span>Tap to Scan Fingerprint</span>
+            </button>
+          )}
+
+          {/* Scanning animation bar */}
+          {isScanning && <div className="gate-lock-progress-bar"><div className="gate-lock-progress-fill" /></div>}
+        </div>
+      </div>
     );
   }
 
+  // ── Main App (gate open) ──────────────────────────────────────────────────
+
   return (
     <div className="diorama-app-container">
-      {/* Navbar Header & Mobile Navigation */}
       <Navigation
         activeTab={activeTab}
         setActiveTab={(tab) => {
@@ -158,7 +240,6 @@ function App() {
         }}
       />
 
-      {/* Main Viewport */}
       <main className="main-viewport">
         <div className="content-max-width">
           {toastMessage && (
@@ -173,6 +254,7 @@ function App() {
               setAppState={updateAppState}
               setActiveTab={setActiveTab}
               showToast={showToast}
+              onGateClose={closeGate}
             />
           )}
 
@@ -205,7 +287,6 @@ function App() {
               appState={appState}
               setAppState={updateAppState}
               showToast={showToast}
-              onLogout={handleLogout}
             />
           )}
 
