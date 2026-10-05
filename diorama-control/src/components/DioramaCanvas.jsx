@@ -142,7 +142,7 @@ export default function DioramaCanvas({
 
     // Scene setup
     const scene = new THREE.Scene();
-    scene.background = new THREE.Color(autoDimming ? 0xe9f0e9 : 0xf6f9f6);
+    scene.background = null;
     sceneRef.current = scene;
 
     // Camera tailored for wide diorama layout

@@ -317,7 +317,7 @@ input:checked + .slider.amber-toggle:before { background: #fff; }
 @media (max-width: 768px) {
   .page-container.compact-for-mobile { gap: 14px; }
   .compact-for-mobile .canvas-wrapper { height: 220px !important; }
-  .compact-for-mobile .diorama-preview-card { border-radius: 18px; }
+  .compact-for-mobile .diorama-preview-card { border-radius: 0; border: none; background: transparent; box-shadow: none; padding: 0; }
   .section-block { gap: 8px; }
   .modes-grid { grid-template-columns: repeat(2,1fr) !important; gap: 8px; }
   .mode-card { padding: 10px 12px; border-radius: 14px; gap: 6px; }

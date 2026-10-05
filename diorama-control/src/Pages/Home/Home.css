@@ -560,18 +560,18 @@ input:checked + .slider:before {
 .section-block { display: flex; flex-direction: column; gap: 14px; }
 .section-block-title { font-size: 1.05rem; font-weight: 700; color: var(--text-1); }
 
-/* ── 3D Diorama Preview Card ── */
+/* ── 3D Diorama Preview Container (Frameless Blend) ── */
 .diorama-preview-card {
   width: 100%;
-  background: linear-gradient(135deg, #e8f5ee, #e0f2fe);
-  border-radius: 28px;
-  padding: 18px;
-  border: 1.5px solid var(--c-green-border);
+  background: transparent;
+  border-radius: 0;
+  padding: 0;
+  border: none;
   display: flex;
   flex-direction: column;
   position: relative;
-  overflow: hidden;
-  box-shadow: var(--shadow-card), var(--shadow-green);
+  overflow: visible;
+  box-shadow: none;
 }
 
 .card-top-tag {
@@ -586,19 +586,20 @@ input:checked + .slider:before {
 .canvas-wrapper {
   width: 100%;
   height: 380px;
-  border-radius: 18px;
+  border-radius: 0;
   overflow: hidden;
   cursor: grab;
   position: relative;
-  box-shadow: inset 0 2px 8px rgba(0,0,0,0.08);
+  box-shadow: none;
+  background: transparent;
 }
 
 .canvas-wrapper:active { cursor: grabbing; }
 
 .canvas-overlay-instruction {
   position: absolute;
-  bottom: 26px;
-  right: 28px;
+  bottom: 12px;
+  right: 12px;
   font-size: 0.73rem;
   font-weight: 600;
   color: rgba(15,23,42,0.65);
