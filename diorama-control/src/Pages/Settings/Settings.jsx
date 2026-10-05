@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Cpu, Sun, Mic, Palette, Fingerprint, RefreshCw } from 'lucide-react';
+import { Cpu, Sun, Mic, Palette, Fingerprint, RefreshCw, Plus, Trash2, User } from 'lucide-react';
 import { getLiveSensors } from '../../services/esp32Api';
 import './Settings.css';
 
@@ -11,6 +11,14 @@ export default function SettingsPage({ appState, showToast }) {
     biometric: { active: true }
   });
   const [isRefreshing, setIsRefreshing] = useState(false);
+  
+  // Fingerprint management state
+  const [fingerprintUsers, setFingerprintUsers] = useState([]);
+  const [isLoadingUsers, setIsLoadingUsers] = useState(false);
+  const [showEnrollForm, setShowEnrollForm] = useState(false);
+  const [newUserName, setNewUserName] = useState('');
+  const [isEnrolling, setIsEnrolling] = useState(false);
+  const [sensorAvailable, setSensorAvailable] = useState(false);
 
   const checkSensors = async (manual = false) => {
     if (manual) setIsRefreshing(true);
@@ -44,10 +52,78 @@ export default function SettingsPage({ appState, showToast }) {
     if (manual) setIsRefreshing(false);
   };
 
+  // Fetch fingerprint users
+  const loadFingerprintUsers = async () => {
+    setIsLoadingUsers(true);
+    try {
+      const response = await fetch(`${import.meta.env.VITE_ESP32_BASE_URL || 'http://192.168.4.1'}/api/fingerprint/users`);
+      if (response.ok) {
+        const data = await response.json();
+        setFingerprintUsers(data.users || []);
+        setSensorAvailable(data.sensorAvailable || false);
+      }
+    } catch (error) {
+      console.error('Failed to load fingerprint users:', error);
+    }
+    setIsLoadingUsers(false);
+  };
+
+  // Enroll new user
+  const handleEnrollUser = async () => {
+    if (!newUserName.trim()) {
+      showToast('⚠️ Please enter a name');
+      return;
+    }
+    
+    setIsEnrolling(true);
+    try {
+      const response = await fetch(
+        `${import.meta.env.VITE_ESP32_BASE_URL || 'http://192.168.4.1'}/api/fingerprint/enroll?name=${encodeURIComponent(newUserName)}`
+      );
+      const data = await response.json();
+      
+      if (data.success) {
+        showToast(`✅ ${data.message}`);
+        setNewUserName('');
+        setShowEnrollForm(false);
+        loadFingerprintUsers();
+      } else {
+        showToast(`ℹ️ ${data.message}`);
+        setShowEnrollForm(false);
+      }
+    } catch (error) {
+      showToast('❌ Failed to enroll user');
+    }
+    setIsEnrolling(false);
+  };
+
+  // Delete user
+  const handleDeleteUser = async (userId) => {
+    if (!confirm(`Delete user ID #${userId}?`)) return;
+    
+    try {
+      const response = await fetch(
+        `${import.meta.env.VITE_ESP32_BASE_URL || 'http://192.168.4.1'}/api/fingerprint/delete?id=${userId}`
+      );
+      const data = await response.json();
+      
+      if (data.success) {
+        showToast(`✅ ${data.message}`);
+        loadFingerprintUsers();
+      } else {
+        showToast('❌ Failed to delete user');
+      }
+    } catch (error) {
+      showToast('❌ Failed to delete user');
+    }
+  };
+
   useEffect(() => {
     checkSensors();
+    loadFingerprintUsers();
     const interval = setInterval(() => {
       checkSensors();
+      loadFingerprintUsers();
     }, 3000);
     return () => clearInterval(interval);
   }, [appState.soundReactiveOn, appState.autoDimming]);
@@ -136,6 +212,108 @@ export default function SettingsPage({ appState, showToast }) {
 
           <p className="card-description-subtext mt-3">
             Hardware status indicators showing sensor connectivity and readiness for diorama automation.
+          </p>
+        </div>
+      </div>
+
+      {/* Fingerprint Management Card */}
+      <div className="settings-single-grid mt-4">
+        <div className="control-card">
+          <div className="card-header">
+            <div className="card-title-group">
+              <div className="icon-badge purple">
+                <Fingerprint size={22} />
+              </div>
+              <div>
+                <h3 className="card-title">Fingerprint Management</h3>
+                <p className="card-subtitle">
+                  {sensorAvailable ? 'Sensor Connected' : 'Dummy Mode'} • {fingerprintUsers.length} users enrolled
+                </p>
+              </div>
+            </div>
+            <button 
+              type="button" 
+              className="btn-enroll-pill"
+              onClick={() => setShowEnrollForm(!showEnrollForm)}
+            >
+              <Plus size={16} />
+              <span>Enroll New</span>
+            </button>
+          </div>
+
+          {/* Enroll Form */}
+          {showEnrollForm && (
+            <div className="enroll-form-card">
+              <input
+                type="text"
+                placeholder="Enter user name..."
+                value={newUserName}
+                onChange={(e) => setNewUserName(e.target.value)}
+                onKeyPress={(e) => e.key === 'Enter' && handleEnrollUser()}
+                className="enroll-input"
+                maxLength={30}
+              />
+              <div className="enroll-form-actions">
+                <button 
+                  onClick={() => setShowEnrollForm(false)} 
+                  className="btn-cancel"
+                  disabled={isEnrolling}
+                >
+                  Cancel
+                </button>
+                <button 
+                  onClick={handleEnrollUser} 
+                  className="btn-enroll-submit"
+                  disabled={isEnrolling}
+                >
+                  {isEnrolling ? 'Enrolling...' : 'Enroll'}
+                </button>
+              </div>
+              {!sensorAvailable && (
+                <p className="enroll-note">
+                  ℹ️ Dummy mode: User will be added without biometric scan
+                </p>
+              )}
+              {sensorAvailable && (
+                <p className="enroll-note">
+                  ℹ️ You'll need to use the TFT display to scan the fingerprint
+                </p>
+              )}
+            </div>
+          )}
+
+          {/* Users List */}
+          <div className="fingerprint-users-list">
+            {isLoadingUsers ? (
+              <p className="users-loading">Loading users...</p>
+            ) : fingerprintUsers.length === 0 ? (
+              <p className="no-users-msg">No users enrolled yet. Click "Enroll New" to add your first fingerprint.</p>
+            ) : (
+              fingerprintUsers.map((user) => (
+                <div key={user.id} className="user-item-row">
+                  <div className="user-item-left">
+                    <div className="user-id-badge">
+                      <span>{user.id}</span>
+                    </div>
+                    <div className="user-info">
+                      <span className="user-name">{user.name}</span>
+                      <span className="user-id-text">ID #{user.id}</span>
+                    </div>
+                  </div>
+                  <button
+                    className="btn-delete-user"
+                    onClick={() => handleDeleteUser(user.id)}
+                    title="Delete user"
+                  >
+                    <Trash2 size={16} />
+                  </button>
+                </div>
+              ))
+            )}
+          </div>
+
+          <p className="card-description-subtext mt-3">
+            Manage enrolled fingerprints for biometric gate access. Changes sync between TFT and web app.
           </p>
         </div>
       </div>

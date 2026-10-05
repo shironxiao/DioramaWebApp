@@ -709,23 +709,6 @@ input:checked + .slider:before {
   position: relative; z-index: 2;
 }
 
-.fingerprint-icon {
-  color: var(--c-green);
-  transition: all 0.3s ease;
-  filter: drop-shadow(0 2px 6px rgba(22,163,74,0.3));
-}
-
-.biometric-scan-btn.gate-is-open .fingerprint-icon { color: var(--c-green-lt); }
-
-.fingerprint-icon.fp-scanning {
-  animation: fpScan 0.8s ease-in-out infinite alternate;
-}
-
-@keyframes fpScan {
-  0%   { opacity: 0.4; transform: scale(0.95); }
-  100% { opacity: 1;   transform: scale(1.08); }
-}
-
 .biometric-label {
   font-size: 0.82rem;
   font-weight: 700;

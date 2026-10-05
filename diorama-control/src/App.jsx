@@ -249,27 +249,37 @@ function App() {
             {isGoodbye
               ? 'Goodbye!'
               : isScanning
-              ? 'Verifying...'
-              : 'Welcome!'}
+              ? 'Scanning Fingerprint...'
+              : 'Hi! Welcome!'}
           </h1>
 
           <p className="gate-lock-subtitle">
             {isGoodbye
-              ? 'Thank you for visiting Silvestre del Moro Park.'
+              ? 'Thank you for visiting.'
               : isScanning
-              ? 'Scanning your fingerprint, please wait...'
-              : 'Please scan your fingerprint to enter.'}
+              ? 'Verifying biometric data, please wait...'
+              : (
+                <>
+                  Place your finger on the<br />
+                  biometric scanner to control your diorama
+                </>
+              )}
           </p>
 
-          {/* Scan button — only visible when waiting */}
+          {/* Auto-trigger on card click when waiting (simulates biometric sensor) */}
           {!isScanning && !isGoodbye && (
-            <button
-              className="gate-lock-scan-btn"
+            <div 
+              className="gate-lock-biometric-zone"
               onClick={handleWebBiometricScan}
+              role="button"
+              tabIndex={0}
+              aria-label="Simulate biometric scanner"
             >
-              <Fingerprint size={20} />
-              <span>Tap to Scan Fingerprint</span>
-            </button>
+              <Fingerprint size={48} strokeWidth={1.2} className="biometric-guide-icon" />
+              <p className="biometric-instruction-text">
+                Touch here to simulate sensor
+              </p>
+            </div>
           )}
 
           {/* Scanning animation bar */}

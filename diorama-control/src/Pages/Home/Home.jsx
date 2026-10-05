@@ -6,7 +6,6 @@ import {
   Play,
   Pause,
   ChevronRight,
-  Fingerprint,
   Lock,
   Unlock
 } from 'lucide-react';
@@ -218,11 +217,6 @@ export default function Home({ appState, setAppState, setActiveTab, showToast, o
             aria-label="Biometric fingerprint scanner to open or close the gate"
           >
             <div className="biometric-inner">
-              <Fingerprint
-                size={30}
-                className={`fingerprint-icon ${isScanning ? 'fp-scanning' : ''}`}
-                strokeWidth={1.75}
-              />
               <span className="biometric-label">
                 {isScanning
                   ? 'Verifying...'

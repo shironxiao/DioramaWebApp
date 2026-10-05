@@ -33,10 +33,17 @@
 
 // ── Types — defined inline to avoid header include issues ───────────────────
 struct RGB    { uint8_t r, g, b; };   // must be first — used in function signatures
-enum Page     { P_LIGHTS = 0, P_AUDIO = 1 };
+enum Page     { P_LIGHTS = 0, P_AUDIO = 1, P_SETTINGS = 2 };
 enum Mode     { M_BASIC = 0, M_COLOR = 1, M_SOUND = 2, M_ADAPT = 3 };
 enum Drag     { D_NONE = 0, D_BR, D_HUE, D_SAT, D_SENS, D_VOL };
 enum GateState { GS_WAITING = 0, GS_SCANNING = 1, GS_OPEN = 2, GS_GOODBYE = 3 };
+
+// User structure for fingerprint management
+struct FingerprintUser {
+  int id;
+  char name[32];
+  bool active;
+};
 
 // ── Libraries ────────────────────────────────────────────────────────────────
 #include <TFT_eSPI.h>
@@ -47,6 +54,8 @@ enum GateState { GS_WAITING = 0, GS_SCANNING = 1, GS_OPEN = 2, GS_GOODBYE = 3 };
 #include "Audio.h"
 #include <WiFi.h>
 #include <WebServer.h>
+#include <ArduinoJson.h>
+#include <Adafruit_Fingerprint.h>
 #include "webapp_embed.h"
 
 // ── WiFi — Access Point mode ──────────────────────────────────────────────────
@@ -73,15 +82,32 @@ enum GateState { GS_WAITING = 0, GS_SCANNING = 1, GS_OPEN = 2, GS_GOODBYE = 3 };
 #define FOUNTAIN_PIN 33   // shared with SD MISO — see note above
 #define GATE_PIN     15   // gate servo / relay
 
+// Fingerprint sensor pins (UART2)
+#define FP_RX_PIN    16
+#define FP_TX_PIN    17
+
 // Calibration
 #define CALIBRATION_FILE "/DioramaCalData"
 #define REPEAT_CAL       false
+
+// User data file
+#define USERS_FILE "/fingerprint_users.json"
+#define MAX_USERS 50
 
 // ── Objects ───────────────────────────────────────────────────────────────────
 TFT_eSPI   tft = TFT_eSPI();
 SPIClass   sdSPI(HSPI);
 Audio      audio;
 WebServer  server(80);
+
+// Fingerprint sensor
+HardwareSerial fingerprintSerial(2);
+Adafruit_Fingerprint finger = Adafruit_Fingerprint(&fingerprintSerial);
+
+// Fingerprint users array
+FingerprintUser users[MAX_USERS];
+int userCount = 0;
+bool fpSensorAvailable = false;
 
 // ── Colour palette (RGB565) ───────────────────────────────────────────────────
 constexpr uint16_t rgb565(uint8_t r, uint8_t g, uint8_t b) {
@@ -403,16 +429,227 @@ void drawHeader() {
   // Park name (centred between Exit and tab buttons)
   txt("Silvestre del Moro", 92, HDR_H / 2, 2, C_TEXT, C_HDR, ML_DATUM);
 
-  // Page tabs
-  bool aL = (page == P_LIGHTS), aA = (page == P_AUDIO);
-  tft.fillRect(300, 0, 90, HDR_H - 1, aL ? C_AMBER  : C_HDR);
-  txt("Lights", 345, HDR_H / 2, 2, aL ? C_WHITE : C_DIM, aL ? C_AMBER : C_HDR, MC_DATUM);
-  tft.fillRect(390, 0, 90, HDR_H - 1, aA ? C_GREEN  : C_HDR);
-  txt("Audio",  435, HDR_H / 2, 2, aA ? C_WHITE : C_DIM, aA ? C_GREEN : C_HDR, MC_DATUM);
+  // Page tabs - 3 tabs now (Lights, Audio, Settings)
+  bool aL = (page == P_LIGHTS), aA = (page == P_AUDIO), aS = (page == P_SETTINGS);
+  
+  tft.fillRect(260, 0, 75, HDR_H - 1, aL ? C_AMBER  : C_HDR);
+  txt("Lights", 297, HDR_H / 2, 2, aL ? C_WHITE : C_DIM, aL ? C_AMBER : C_HDR, MC_DATUM);
+  
+  tft.fillRect(335, 0, 70, HDR_H - 1, aA ? C_GREEN  : C_HDR);
+  txt("Audio",  370, HDR_H / 2, 2, aA ? C_WHITE : C_DIM, aA ? C_GREEN : C_HDR, MC_DATUM);
+  
+  tft.fillRect(405, 0, 75, HDR_H - 1, aS ? C_PURPLE : C_HDR);
+  txt("Settings", 442, HDR_H / 2, 2, aS ? C_WHITE : C_DIM, aS ? C_PURPLE : C_HDR, MC_DATUM);
 
   // WiFi AP dot (green = AP active) + SD dot
   tft.fillCircle(474, 8,  4, WiFi.softAPgetStationNum() >= 0 ? C_GREEN : C_RED);
   tft.fillCircle(474, 22, 4, sdOk ? C_GREEN : C_RED);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// FINGERPRINT SENSOR MANAGEMENT
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// Load users from SPIFFS
+void loadUsers() {
+  userCount = 0;
+  if (!SPIFFS.exists(USERS_FILE)) {
+    Serial.println("[FP] No users file found");
+    return;
+  }
+  
+  File file = SPIFFS.open(USERS_FILE, "r");
+  if (!file) {
+    Serial.println("[FP] Failed to open users file");
+    return;
+  }
+  
+  StaticJsonDocument<4096> doc;
+  DeserializationError error = deserializeJson(doc, file);
+  file.close();
+  
+  if (error) {
+    Serial.printf("[FP] JSON parse error: %s\n", error.c_str());
+    return;
+  }
+  
+  JsonArray usersArray = doc["users"];
+  for (JsonObject user : usersArray) {
+    if (userCount >= MAX_USERS) break;
+    users[userCount].id = user["id"];
+    strlcpy(users[userCount].name, user["name"] | "Unknown", 32);
+    users[userCount].active = user["active"] | true;
+    userCount++;
+  }
+  
+  Serial.printf("[FP] Loaded %d users\n", userCount);
+}
+
+// Save users to SPIFFS
+void saveUsers() {
+  StaticJsonDocument<4096> doc;
+  JsonArray usersArray = doc.createNestedArray("users");
+  
+  for (int i = 0; i < userCount; i++) {
+    JsonObject user = usersArray.createNestedObject();
+    user["id"] = users[i].id;
+    user["name"] = users[i].name;
+    user["active"] = users[i].active;
+  }
+  
+  File file = SPIFFS.open(USERS_FILE, "w");
+  if (!file) {
+    Serial.println("[FP] Failed to save users");
+    return;
+  }
+  
+  serializeJson(doc, file);
+  file.close();
+  Serial.println("[FP] Users saved");
+}
+
+// Find user by fingerprint ID
+const char* getUserName(int fpID) {
+  for (int i = 0; i < userCount; i++) {
+    if (users[i].id == fpID && users[i].active) {
+      return users[i].name;
+    }
+  }
+  return "Unknown User";
+}
+
+// Find next available fingerprint ID
+int findNextFreeID() {
+  for (int id = 1; id <= 127; id++) {
+    bool used = false;
+    for (int i = 0; i < userCount; i++) {
+      if (users[i].id == id) {
+        used = true;
+        break;
+      }
+    }
+    if (!used) return id;
+  }
+  return -1; // All slots full
+}
+
+// Add new user
+bool addUser(int fpID, const char* name) {
+  if (userCount >= MAX_USERS) return false;
+  
+  users[userCount].id = fpID;
+  strlcpy(users[userCount].name, name, 32);
+  users[userCount].active = true;
+  userCount++;
+  
+  saveUsers();
+  return true;
+}
+
+// Delete user
+bool deleteUser(int fpID) {
+  for (int i = 0; i < userCount; i++) {
+    if (users[i].id == fpID) {
+      // Shift remaining users
+      for (int j = i; j < userCount - 1; j++) {
+        users[j] = users[j + 1];
+      }
+      userCount--;
+      saveUsers();
+      
+      // Delete from sensor
+      if (fpSensorAvailable) {
+        finger.deleteModel(fpID);
+      }
+      
+      Serial.printf("[FP] Deleted user ID #%d\n", fpID);
+      return true;
+    }
+  }
+  return false;
+}
+
+// Setup fingerprint sensor
+void setupFingerprintSensor() {
+  fingerprintSerial.begin(57600, SERIAL_8N1, FP_RX_PIN, FP_TX_PIN);
+  delay(100);
+  
+  if (finger.verifyPassword()) {
+    fpSensorAvailable = true;
+    Serial.println("[FP] ✓ Sensor connected");
+    
+    finger.getTemplateCount();
+    Serial.printf("[FP] %d templates stored in sensor\n", finger.templateCount);
+  } else {
+    fpSensorAvailable = false;
+    Serial.println("[FP] ✗ Sensor not found (dummy mode active)");
+  }
+}
+
+// Enroll new fingerprint
+// Returns: 0=success, 1=no finger, 2=error, 3=mismatch
+int enrollFingerprint(int id, int step) {
+  if (!fpSensorAvailable) return 0; // Dummy mode - always success
+  
+  if (step == 1) {
+    // First capture
+    uint8_t p = finger.getImage();
+    if (p == FINGERPRINT_NOFINGER) return 1;
+    if (p != FINGERPRINT_OK) return 2;
+    
+    p = finger.image2Tz(1);
+    if (p != FINGERPRINT_OK) return 2;
+    
+    Serial.println("[FP] First capture OK");
+    return 0;
+    
+  } else if (step == 2) {
+    // Second capture
+    uint8_t p = finger.getImage();
+    if (p == FINGERPRINT_NOFINGER) return 1;
+    if (p != FINGERPRINT_OK) return 2;
+    
+    p = finger.image2Tz(2);
+    if (p != FINGERPRINT_OK) return 2;
+    
+    // Create model
+    p = finger.createModel();
+    if (p != FINGERPRINT_OK) {
+      Serial.println("[FP] Fingerprints did not match");
+      return 3;
+    }
+    
+    // Store model
+    p = finger.storeModel(id);
+    if (p != FINGERPRINT_OK) return 2;
+    
+    Serial.printf("[FP] ✓ Enrolled at ID #%d\n", id);
+    return 0;
+  }
+  
+  return 2;
+}
+
+// Verify fingerprint
+// Returns: fingerprint ID if match found, -1 if no match, -2 if error
+int verifyFingerprint() {
+  if (!fpSensorAvailable) return 1; // Dummy mode - always ID #1
+  
+  uint8_t p = finger.getImage();
+  if (p != FINGERPRINT_OK) return -2;
+  
+  p = finger.image2Tz();
+  if (p != FINGERPRINT_OK) return -2;
+  
+  p = finger.fingerSearch();
+  if (p == FINGERPRINT_OK) {
+    Serial.printf("[FP] ✓ Match! ID #%d (confidence: %d)\n", 
+                  finger.fingerID, finger.confidence);
+    return finger.fingerID;
+  } else {
+    Serial.println("[FP] ✗ No match found");
+    return -1;
+  }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -425,44 +662,40 @@ void drawGateScreen() {
 
   txt("Silvestre del Moro Park", W / 2, 22, 2, C_DIM, C_BG, MC_DATUM);
 
-  // Icon circle  (centre 240, 120; r=48)
   int cx = W / 2, cy = 110;
-  tft.fillCircle(cx, cy, 48, C_CARD);
-  tft.drawCircle(cx, cy, 48, C_GREEN);
-  tft.drawCircle(cx, cy, 44, C_BORDER);
 
   switch (gateState) {
     case GS_WAITING: {
-      // Fingerprint rings
-      tft.drawCircle(cx, cy, 20, C_GREEN);
-      tft.drawCircle(cx, cy, 13, C_GREEN);
-      tft.drawCircle(cx, cy,  6, C_GREEN);
-      tft.drawFastVLine(cx, cy - 20, 40, C_GREEN);
-      tft.drawFastHLine(cx - 20, cy, 40, C_GREEN);
-
-      txt("Hi! Welcome!", cx, 178, 4, C_TEXT, C_BG, MC_DATUM);
-      txt("Please scan your fingerprint to enter.", cx, 208, 2, C_DIM, C_BG, MC_DATUM);
-
-      // Scan button
-      card(cx - 120, 240, 240, 50, C_GREEN, C_GREEN);
-      txt("TAP HERE TO SCAN", cx, 265, 2, C_WHITE, C_GREEN, MC_DATUM);
+      txt("Hi! Welcome!", cx, 100, 4, C_TEXT, C_BG, MC_DATUM);
+      txt("Place your finger on the", cx, 145, 2, C_DIM, C_BG, MC_DATUM);
+      txt("biometric scanner to control your diorama", cx, 170, 2, C_DIM, C_BG, MC_DATUM);
+      
+      // Fingerprint icon visual guide
+      tft.drawCircle(cx, 230, 35, C_GREEN);
+      tft.drawCircle(cx, 230, 28, C_GREEN);
+      tft.drawCircle(cx, 230, 21, C_GREEN);
+      tft.drawFastVLine(cx, 195, 70, C_GREEN);
+      tft.drawFastHLine(cx - 35, 230, 70, C_GREEN);
+      
+      txt("Touch anywhere to simulate sensor", cx, 290, 1, C_DIM, C_BG, MC_DATUM);
       break;
     }
     case GS_SCANNING: {
-      tft.drawCircle(cx, cy, 20, C_AMBER);
-      tft.drawCircle(cx, cy, 13, C_AMBER);
-      tft.drawCircle(cx, cy,  6, C_AMBER);
-      tft.drawFastVLine(cx, cy - 20, 40, C_AMBER);
-      tft.drawFastHLine(cx - 20, cy, 40, C_AMBER);
+      txt("Scanning Fingerprint...", cx, 110, 4, C_AMBER, C_BG, MC_DATUM);
+      txt("Verifying biometric data, please wait...", cx, 150, 2, C_DIM, C_BG, MC_DATUM);
 
-      txt("Scanning...", cx, 178, 4, C_AMBER, C_BG, MC_DATUM);
-      txt("Verifying fingerprint, please wait...", cx, 208, 2, C_DIM, C_BG, MC_DATUM);
+      // Animated fingerprint icon while scanning
+      tft.drawCircle(cx, 210, 35, C_AMBER);
+      tft.drawCircle(cx, 210, 28, C_AMBER);
+      tft.drawCircle(cx, 210, 21, C_AMBER);
+      tft.drawFastVLine(cx, 175, 70, C_AMBER);
+      tft.drawFastHLine(cx - 35, 210, 70, C_AMBER);
 
       // Progress bar rail
-      tft.fillRoundRect(cx - 120, 240, 240, 12, 6, C_TRACK);
+      tft.fillRoundRect(cx - 120, 270, 240, 12, 6, C_TRACK);
       uint32_t elapsed = millis() - gateMs;
       int fw = constrain((int)(240L * elapsed / SCAN_MS), 0, 240);
-      if (fw > 0) tft.fillRoundRect(cx - 120, 240, fw, 12, 6, C_GREEN);
+      if (fw > 0) tft.fillRoundRect(cx - 120, 270, fw, 12, 6, C_GREEN);
       break;
     }
     case GS_OPEN: {
@@ -472,8 +705,8 @@ void drawGateScreen() {
       tft.fillRoundRect(cx - 18, cy + 6, 36, 28, 4, C_GREEN);
       tft.fillCircle(cx, cy + 17, 5, C_WHITE);
 
-      txt("Welcome!", cx, 178, 4, C_GREEN, C_BG, MC_DATUM);
-      txt("You may now interact with the diorama.", cx, 208, 2, C_DIM, C_BG, MC_DATUM);
+      txt("Access Granted!", cx, 178, 4, C_GREEN, C_BG, MC_DATUM);
+      txt("You may now control the diorama.", cx, 208, 2, C_DIM, C_BG, MC_DATUM);
       break;
     }
     case GS_GOODBYE: {
@@ -768,6 +1001,197 @@ void drawAudio() {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
+// SETTINGS PAGE — Fingerprint Management
+// ═══════════════════════════════════════════════════════════════════════════════
+
+void drawSettings() {
+  tft.fillRect(0, BODY_Y, W, BODY_H, C_BG);
+
+  // Title
+  txt("Fingerprint Management", W / 2, BODY_Y + 14, 4, C_TEXT, C_BG, MC_DATUM);
+  
+  // Sensor status
+  const char* status = fpSensorAvailable ? "Connected" : "Dummy Mode";
+  uint16_t statusColor = fpSensorAvailable ? C_GREEN : C_AMBER;
+  txt(status, W / 2, BODY_Y + 42, 2, statusColor, C_BG, MC_DATUM);
+  
+  // Enroll button
+  card(40, BODY_Y + 60, 180, 50, C_GREEN, C_GREEN);
+  txt("Enroll New", 130, BODY_Y + 85, 2, C_WHITE, C_GREEN, MC_DATUM);
+  
+  // List users section
+  label("Enrolled Users:", 20, BODY_Y + 125);
+  
+  if (userCount == 0) {
+    txt("No users enrolled yet", W / 2, BODY_Y + 160, 2, C_DIM, C_BG, MC_DATUM);
+  } else {
+    int y = BODY_Y + 145;
+    for (int i = 0; i < min(userCount, 6); i++) {
+      // User card
+      card(20, y, 440, 28, C_CARD, C_BORDER);
+      
+      // ID badge
+      tft.fillCircle(35, y + 14, 10, C_PURPLE);
+      char idStr[4];
+      snprintf(idStr, sizeof(idStr), "%d", users[i].id);
+      txt(idStr, 35, y + 14, 2, C_WHITE, C_PURPLE, MC_DATUM);
+      
+      // Name
+      txt(users[i].name, 55, y + 14, 2, C_TEXT, C_CARD, ML_DATUM);
+      
+      // Delete button
+      tft.fillRoundRect(410, y + 6, 40, 16, 4, C_RED);
+      txt("DEL", 430, y + 14, 1, C_WHITE, C_RED, MC_DATUM);
+      
+      y += 32;
+    }
+    
+    if (userCount > 6) {
+      char more[24];
+      snprintf(more, sizeof(more), "+%d more...", userCount - 6);
+      txt(more, W / 2, y + 10, 2, C_DIM, C_BG, MC_DATUM);
+    }
+  }
+}
+
+// Enrollment states
+enum EnrollState { ENROLL_IDLE, ENROLL_STEP1, ENROLL_STEP1_WAIT, ENROLL_STEP2, ENROLL_STEP2_WAIT, ENROLL_SUCCESS, ENROLL_ERROR };
+EnrollState enrollState = ENROLL_IDLE;
+int enrollingID = -1;
+uint32_t enrollStateMs = 0;
+
+void drawEnrollmentScreen() {
+  tft.fillScreen(C_BG);
+  tft.fillRect(0, 0, W, 4, C_PURPLE);
+  
+  txt("Fingerprint Enrollment", W / 2, 22, 2, C_DIM, C_BG, MC_DATUM);
+  
+  int cx = W / 2;
+  
+  switch (enrollState) {
+    case ENROLL_STEP1:
+      txt("Step 1 of 2", cx, 80, 2, C_PURPLE, C_BG, MC_DATUM);
+      txt("Place finger on sensor", cx, 120, 4, C_TEXT, C_BG, MC_DATUM);
+      
+      // Fingerprint icon
+      tft.drawCircle(cx, 180, 35, C_PURPLE);
+      tft.drawCircle(cx, 180, 28, C_PURPLE);
+      tft.drawCircle(cx, 180, 21, C_PURPLE);
+      tft.drawFastVLine(cx, 145, 70, C_PURPLE);
+      tft.drawFastHLine(cx - 35, 180, 70, C_PURPLE);
+      
+      card(cx - 80, 250, 160, 40, C_BORDER, C_BORDER);
+      txt("Cancel", cx, 270, 2, C_DIM, C_BG, MC_DATUM);
+      break;
+      
+    case ENROLL_STEP1_WAIT:
+      txt("Remove finger", cx, 120, 4, C_GREEN, C_BG, MC_DATUM);
+      txt("Preparing for second scan...", cx, 160, 2, C_DIM, C_BG, MC_DATUM);
+      break;
+      
+    case ENROLL_STEP2:
+      txt("Step 2 of 2", cx, 80, 2, C_PURPLE, C_BG, MC_DATUM);
+      txt("Place SAME finger again", cx, 120, 4, C_TEXT, C_BG, MC_DATUM);
+      
+      // Fingerprint icon
+      tft.drawCircle(cx, 180, 35, C_PURPLE);
+      tft.drawCircle(cx, 180, 28, C_PURPLE);
+      tft.drawCircle(cx, 180, 21, C_PURPLE);
+      tft.drawFastVLine(cx, 145, 70, C_PURPLE);
+      tft.drawFastHLine(cx - 35, 180, 70, C_PURPLE);
+      
+      card(cx - 80, 250, 160, 40, C_BORDER, C_BORDER);
+      txt("Cancel", cx, 270, 2, C_DIM, C_BG, MC_DATUM);
+      break;
+      
+    case ENROLL_SUCCESS:
+      tft.fillCircle(cx, 140, 40, C_GREEN);
+      txt("✓", cx, 140, 7, C_WHITE, C_GREEN, MC_DATUM);
+      txt("Success!", cx, 200, 4, C_GREEN, C_BG, MC_DATUM);
+      txt("Fingerprint enrolled", cx, 235, 2, C_TEXT, C_BG, MC_DATUM);
+      break;
+      
+    case ENROLL_ERROR:
+      tft.fillCircle(cx, 140, 40, C_RED);
+      txt("✗", cx, 140, 7, C_WHITE, C_RED, MC_DATUM);
+      txt("Error", cx, 200, 4, C_RED, C_BG, MC_DATUM);
+      txt("Fingerprints did not match", cx, 235, 2, C_TEXT, C_BG, MC_DATUM);
+      
+      card(cx - 80, 260, 160, 40, C_PURPLE, C_PURPLE);
+      txt("Try Again", cx, 280, 2, C_WHITE, C_PURPLE, MC_DATUM);
+      break;
+      
+    default:
+      break;
+  }
+}
+
+void startEnrollment() {
+  enrollingID = findNextFreeID();
+  if (enrollingID == -1) {
+    Serial.println("[FP] All slots full!");
+    return;
+  }
+  
+  enrollState = ENROLL_STEP1;
+  enrollStateMs = millis();
+  drawEnrollmentScreen();
+  Serial.printf("[FP] Starting enrollment for ID #%d\n", enrollingID);
+}
+
+void pollEnrollment() {
+  if (enrollState == ENROLL_IDLE) return;
+  
+  if (enrollState == ENROLL_STEP1) {
+    int result = enrollFingerprint(enrollingID, 1);
+    if (result == 0) {
+      // Success - move to wait state
+      enrollState = ENROLL_STEP1_WAIT;
+      enrollStateMs = millis();
+      drawEnrollmentScreen();
+    } else if (result == 2) {
+      // Error
+      enrollState = ENROLL_ERROR;
+      drawEnrollmentScreen();
+    }
+    
+  } else if (enrollState == ENROLL_STEP1_WAIT) {
+    if (millis() - enrollStateMs > 2000) {
+      enrollState = ENROLL_STEP2;
+      drawEnrollmentScreen();
+    }
+    
+  } else if (enrollState == ENROLL_STEP2) {
+    int result = enrollFingerprint(enrollingID, 2);
+    if (result == 0) {
+      // Success!
+      char newName[32];
+      snprintf(newName, sizeof(newName), "User %d", enrollingID);
+      addUser(enrollingID, newName);
+      
+      enrollState = ENROLL_SUCCESS;
+      drawEnrollmentScreen();
+      
+      // Auto return to settings after 2s
+      enrollStateMs = millis();
+      
+    } else if (result == 2 || result == 3) {
+      // Error or mismatch
+      enrollState = ENROLL_ERROR;
+      drawEnrollmentScreen();
+    }
+    
+  } else if (enrollState == ENROLL_SUCCESS) {
+    if (millis() - enrollStateMs > 2000) {
+      enrollState = ENROLL_IDLE;
+      page = P_SETTINGS;
+      drawHeader();
+      drawSettings();
+    }
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
 // SOUND SENSOR
 // ═══════════════════════════════════════════════════════════════════════════════
 
@@ -875,9 +1299,10 @@ void autoAdvance() {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 void onPress(int x, int y) {
-  // ── Gate screen ──────────────────────────────────────────────────────────
+  // ── Gate screen (dummy biometric simulation) ────────────────────────────
   if (gateState != GS_OPEN) {
-    if (gateState == GS_WAITING && inRect(x, y, W/2 - 120, 240, 240, 50)) {
+    // Any touch on the waiting screen simulates biometric sensor placement
+    if (gateState == GS_WAITING) {
       enterGateState(GS_SCANNING);
     }
     return;
@@ -890,14 +1315,67 @@ void onPress(int x, int y) {
       enterGateState(GS_GOODBYE);
       return;
     }
-    // Page tabs
-    if (inRect(x, y, 290, 0, 95, HDR_H + 10)) {
+    // Page tabs - 3 tabs now
+    if (inRect(x, y, 250, 0, 85, HDR_H + 10)) {
       if (page != P_LIGHTS) { page = P_LIGHTS; drawHeader(); drawLights(); }
       return;
     }
-    if (inRect(x, y, 385, 0, 95, HDR_H + 10)) {
+    if (inRect(x, y, 330, 0, 75, HDR_H + 10)) {
       if (page != P_AUDIO) { page = P_AUDIO; drawHeader(); drawAudio(); }
       return;
+    }
+    if (inRect(x, y, 400, 0, 80, HDR_H + 10)) {
+      if (page != P_SETTINGS) { page = P_SETTINGS; drawHeader(); drawSettings(); }
+      return;
+    }
+    return;
+  }
+
+  // ── Enrollment screen ──────────────────────────────────────────────────────
+  if (enrollState != ENROLL_IDLE) {
+    int cx = W / 2;
+    
+    // Cancel button during enrollment
+    if ((enrollState == ENROLL_STEP1 || enrollState == ENROLL_STEP2) &&
+        inRect(x, y, cx - 80, 250, 160, 40)) {
+      enrollState = ENROLL_IDLE;
+      page = P_SETTINGS;
+      drawHeader();
+      drawSettings();
+      Serial.println("[FP] Enrollment cancelled");
+      return;
+    }
+    
+    // Try Again button on error
+    if (enrollState == ENROLL_ERROR && inRect(x, y, cx - 80, 260, 160, 40)) {
+      startEnrollment();
+      return;
+    }
+    
+    return; // Block all other touches during enrollment
+  }
+
+  // ── Settings page ──────────────────────────────────────────────────────────
+  if (page == P_SETTINGS) {
+    // Enroll New button
+    if (inRect(x, y, 40, BODY_Y + 60, 180, 50)) {
+      startEnrollment();
+      return;
+    }
+    
+    // Delete user buttons
+    if (userCount > 0) {
+      int cy = BODY_Y + 145;
+      for (int i = 0; i < min(userCount, 6); i++) {
+        if (inRect(x, y, 410, cy + 6, 40, 16)) {
+          // Delete this user
+          deleteUser(users[i].id);
+          drawSettings();
+          Serial.printf("[FP] Deleted user #%d via TFT\n", users[i].id);
+          return;
+        }
+        cy += 32;
+      }
     }
     return;
   }
@@ -1405,6 +1883,81 @@ void handleSensors() {
   server.send(200, "application/json", buf);
 }
 
+// ── GET /api/fingerprint/users  → list all enrolled users ────────────────────
+void handleFingerprintUsers() {
+  StaticJsonDocument<4096> doc;
+  JsonArray usersArray = doc.createNestedArray("users");
+  
+  for (int i = 0; i < userCount; i++) {
+    JsonObject user = usersArray.createNestedObject();
+    user["id"] = users[i].id;
+    user["name"] = users[i].name;
+    user["active"] = users[i].active;
+  }
+  
+  doc["sensorAvailable"] = fpSensorAvailable;
+  doc["totalSlots"] = 127;
+  doc["usedSlots"] = userCount;
+  
+  String response;
+  serializeJson(doc, response);
+  server.send(200, "application/json", response);
+}
+
+// ── POST /api/fingerprint/enroll?name=xxx  → start enrollment ────────────────
+// In reality, this would need to be async or use websocket
+// For now, returns the next available ID and web app polls status
+void handleFingerprintEnroll() {
+  if (!server.hasArg("name")) {
+    server.send(400, "application/json", "{\"error\":\"missing name parameter\"}");
+    return;
+  }
+  
+  String name = server.arg("name");
+  int nextID = findNextFreeID();
+  
+  if (nextID == -1) {
+    server.send(400, "application/json", "{\"error\":\"all slots full\"}");
+    return;
+  }
+  
+  // In dummy mode, immediately add user
+  if (!fpSensorAvailable) {
+    addUser(nextID, name.c_str());
+    char buf[128];
+    snprintf(buf, sizeof(buf), "{\"success\":true,\"id\":%d,\"message\":\"User enrolled (dummy mode)\"}", nextID);
+    server.send(200, "application/json", buf);
+    Serial.printf("[API] Enrolled user '%s' at ID #%d (dummy)\n", name.c_str(), nextID);
+    return;
+  }
+  
+  // With real sensor, return ID and instruct to use TFT
+  char buf[256];
+  snprintf(buf, sizeof(buf), 
+    "{\"success\":false,\"id\":%d,\"message\":\"Please use TFT display to complete fingerprint enrollment\"}", 
+    nextID);
+  server.send(200, "application/json", buf);
+}
+
+// ── DELETE /api/fingerprint/delete?id=X  → delete fingerprint ────────────────
+void handleFingerprintDelete() {
+  if (!server.hasArg("id")) {
+    server.send(400, "application/json", "{\"error\":\"missing id parameter\"}");
+    return;
+  }
+  
+  int id = server.arg("id").toInt();
+  
+  if (deleteUser(id)) {
+    char buf[128];
+    snprintf(buf, sizeof(buf), "{\"success\":true,\"message\":\"User #%d deleted\"}", id);
+    server.send(200, "application/json", buf);
+    Serial.printf("[API] Deleted user ID #%d\n", id);
+  } else {
+    server.send(404, "application/json", "{\"error\":\"user not found\"}");
+  }
+}
+
 // ── CORS preflight (OPTIONS) ──────────────────────────────────────────────────
 void handleOptions() {
   server.sendHeader("Access-Control-Allow-Origin", "*");
@@ -1438,6 +1991,9 @@ void setupRoutes() {
   server.on("/api/color-sensor",     HTTP_OPTIONS, handleOptions);
   server.on("/api/sensors",          HTTP_OPTIONS, handleOptions);
   server.on("/api/state",            HTTP_OPTIONS, handleOptions);
+  server.on("/api/fingerprint/users",   HTTP_OPTIONS, handleOptions);
+  server.on("/api/fingerprint/enroll",  HTTP_OPTIONS, handleOptions);
+  server.on("/api/fingerprint/delete",  HTTP_OPTIONS, handleOptions);
 
   // GET handlers (wrap with CORS header injection)
   server.on("/api/light",  HTTP_GET, []() { addCORSHeaders(); handleLight();        });
@@ -1456,6 +2012,11 @@ void setupRoutes() {
   server.on("/api/color-sensor",HTTP_GET,[]() { addCORSHeaders(); handleColorSensor(); });
   server.on("/api/sensors",HTTP_GET, []() { addCORSHeaders(); handleSensors();      });
   server.on("/api/state",      HTTP_GET,[]() { addCORSHeaders(); handleState();       });
+  
+  // Fingerprint API
+  server.on("/api/fingerprint/users",  HTTP_GET, []() { addCORSHeaders(); handleFingerprintUsers(); });
+  server.on("/api/fingerprint/enroll", HTTP_GET, []() { addCORSHeaders(); handleFingerprintEnroll(); });
+  server.on("/api/fingerprint/delete", HTTP_GET, []() { addCORSHeaders(); handleFingerprintDelete(); });
 
   // ── Static Web App Files (SPIFFS) ──────────────────────────────────────────
   server.serveStatic("/", SPIFFS, "/");
@@ -1582,6 +2143,11 @@ void setup() {
   pinMode(GATE_PIN, OUTPUT);
   digitalWrite(GATE_PIN, LOW);  // gate closed on boot
 
+  // ── Fingerprint sensor ────────────────────────────────────────────────────
+  setupFingerprintSensor();
+  loadUsers();
+  Serial.printf("[FP] User system initialized: %d users\n", userCount);
+
   // ── WiFi — Access Point ───────────────────────────────────────────────────
   tft.fillScreen(C_BG);
   txt("Starting WiFi AP...", W / 2, H / 2 - 20, 2, C_DIM, C_BG, MC_DATUM);
@@ -1635,8 +2201,11 @@ void loop() {
   if (millis() - touchMs >= 25) { touchMs = millis(); pollTouch(); }
 
   // Sensor / animation updates (lights only when gate is open)
-  if (gateState == GS_OPEN) {
+  if (gateState == GS_OPEN) {  
     updateLive();
     autoAdvance();
   }
+  
+  // Enrollment polling
+  pollEnrollment();
 }
