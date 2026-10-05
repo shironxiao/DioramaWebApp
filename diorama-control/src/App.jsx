@@ -37,11 +37,12 @@ function App() {
   const [appState, setAppState] = useState({
     lightsOn: true,
     brightness: 75,
-    lightingMode: 'Color Adaptive',
-    soundReactiveOn: true,
+    lightingMode: 'Basic',
+    soundReactiveOn: false,
     micSensitivity: 50,
     reactionIntensity: 65,
-    autoDimming: true,
+    autoDimming: false,
+    ambientSensorOn: false,
     simulatedLight: 72,
 
     fountainOn: true,
