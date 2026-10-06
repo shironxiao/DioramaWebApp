@@ -569,27 +569,86 @@ bool deleteUser(int fpID) {
   return false;
 }
 
-// Setup fingerprint sensor
-void setupFingerprintSensor() {
-  fingerprintSerial.begin(57600, SERIAL_8N1, FP_RX_PIN, FP_TX_PIN);
-  delay(100);
-  
-  if (finger.verifyPassword()) {
+// Probe biometric sensor at given baud and pin combination
+bool probeSensor(int baud, int rxPin, int txPin) {
+  fingerprintSerial.end();
+  delay(60);
+  fingerprintSerial.begin(baud, SERIAL_8N1, rxPin, txPin);
+  delay(120);
+  return finger.verifyPassword();
+}
+
+// Probing & initializing optical fingerprint sensor
+bool initFingerprintSensor() {
+  Serial.println("[FP] Probing optical biometric sensor on UART2...");
+  // Sensor boot-up delay
+  delay(900);
+
+  // 1. Try standard connection: Sensor TX -> GPIO 16, Sensor RX -> GPIO 17 @ 57600
+  if (probeSensor(57600, 16, 17)) {
     fpSensorAvailable = true;
-    Serial.println("[FP] ✓ Sensor connected");
-    
+    Serial.println("[FP] ✓ SENSOR CONNECTED! (57600 baud, Sensor TX->GPIO16, Sensor RX->GPIO17)");
     finger.getTemplateCount();
-    Serial.printf("[FP] %d templates stored in sensor\n", finger.templateCount);
-  } else {
-    fpSensorAvailable = false;
-    Serial.println("[FP] ✗ Sensor not found (dummy mode active)");
+    Serial.printf("[FP] %d template(s) stored in sensor flash\n", finger.templateCount);
+    return true;
   }
+
+  // 2. Try standard connection @ 9600 baud
+  if (probeSensor(9600, 16, 17)) {
+    fpSensorAvailable = true;
+    Serial.println("[FP] ✓ SENSOR CONNECTED! (9600 baud, Sensor TX->GPIO16, Sensor RX->GPIO17)");
+    finger.getTemplateCount();
+    Serial.printf("[FP] %d template(s) stored in sensor flash\n", finger.templateCount);
+    return true;
+  }
+
+  // 3. Try swapped connection: Sensor TX -> GPIO 17, Sensor RX -> GPIO 16 @ 57600
+  if (probeSensor(57600, 17, 16)) {
+    fpSensorAvailable = true;
+    Serial.println("[FP] ✓ SENSOR CONNECTED! (57600 baud, swapped pins: RX:17, TX:16)");
+    finger.getTemplateCount();
+    Serial.printf("[FP] %d template(s) stored in sensor flash\n", finger.templateCount);
+    return true;
+  }
+
+  // 4. Try swapped connection @ 9600 baud
+  if (probeSensor(9600, 17, 16)) {
+    fpSensorAvailable = true;
+    Serial.println("[FP] ✓ SENSOR CONNECTED! (9600 baud, swapped pins: RX:17, TX:16)");
+    finger.getTemplateCount();
+    Serial.printf("[FP] %d template(s) stored in sensor flash\n", finger.templateCount);
+    return true;
+  }
+
+  // 5. Try 115200 baud
+  if (probeSensor(115200, 16, 17)) {
+    fpSensorAvailable = true;
+    Serial.println("[FP] ✓ SENSOR CONNECTED! (115200 baud, Sensor TX->GPIO16, Sensor RX->GPIO17)");
+    finger.getTemplateCount();
+    Serial.printf("[FP] %d template(s) stored in sensor flash\n", finger.templateCount);
+    return true;
+  }
+
+  fpSensorAvailable = false;
+  Serial.println("[FP] ✗ Sensor not found on UART2.");
+  Serial.println("[FP]   Wiring guide:");
+  Serial.println("[FP]     Sensor TX  --> ESP32 GPIO 16 (RX2)");
+  Serial.println("[FP]     Sensor RX  --> ESP32 GPIO 17 (TX2)");
+  Serial.println("[FP]     Sensor VCC --> ESP32 5V / VIN (recommended for optical sensors) or 3.3V");
+  Serial.println("[FP]     Sensor GND --> ESP32 GND");
+  return false;
+}
+
+void setupFingerprintSensor() {
+  initFingerprintSensor();
 }
 
 // Enroll new fingerprint
 // Returns: 0=success, 1=no finger, 2=error, 3=mismatch
 int enrollFingerprint(int id, int step) {
-  if (!fpSensorAvailable) return 0; // Dummy mode - always success
+  if (!fpSensorAvailable) {
+    if (!initFingerprintSensor()) return 2;
+  }
   
   if (step == 1) {
     // First capture
@@ -633,7 +692,9 @@ int enrollFingerprint(int id, int step) {
 // Verify fingerprint
 // Returns: fingerprint ID if match found, -1 if no match, -2 if error
 int verifyFingerprint() {
-  if (!fpSensorAvailable) return 1; // Dummy mode - always ID #1
+  if (!fpSensorAvailable) {
+    if (!initFingerprintSensor()) return -2;
+  }
   
   uint8_t p = finger.getImage();
   if (p != FINGERPRINT_OK) return -2;
@@ -677,7 +738,7 @@ void drawGateScreen() {
       tft.drawFastVLine(cx, 195, 70, C_GREEN);
       tft.drawFastHLine(cx - 35, 230, 70, C_GREEN);
       
-      txt("Touch anywhere to simulate sensor", cx, 290, 1, C_DIM, C_BG, MC_DATUM);
+      txt(fpSensorAvailable ? "Sensor Active (TX:17, RX:16) - Touch sensor to scan" : "Touch screen to simulate sensor", cx, 290, 1, C_DIM, C_BG, MC_DATUM);
       break;
     }
     case GS_SCANNING: {
@@ -766,7 +827,41 @@ void enterGateState(GateState s) {
 }
 
 void pollGate() {
-  if (gateState == GS_SCANNING) {
+  if (gateState == GS_WAITING) {
+    // Poll physical biometric sensor on TX/RX
+    static uint32_t lastFpPoll = 0;
+    if (millis() - lastFpPoll >= 180) {
+      lastFpPoll = millis();
+      if (fpSensorAvailable) {
+        uint8_t p = finger.getImage();
+        if (p == FINGERPRINT_OK) {
+          Serial.println("[FP] Finger detected on sensor!");
+          enterGateState(GS_SCANNING);
+          p = finger.image2Tz();
+          if (p == FINGERPRINT_OK) {
+            p = finger.fingerSearch();
+            if (p == FINGERPRINT_OK) {
+              Serial.printf("[FP] Match found! ID #%d (%s)\n", finger.fingerID, getUserName(finger.fingerID));
+              enterGateState(GS_OPEN);
+              return;
+            } else {
+              Serial.println("[FP] Fingerprint not recognized");
+              tft.fillRect(0, 140, W, 70, C_BG);
+              txt("Fingerprint Not Recognized", W / 2, 160, 2, C_RED, C_BG, MC_DATUM);
+              txt("Please register or try again", W / 2, 185, 2, C_DIM, C_BG, MC_DATUM);
+              delay(1400);
+              drawGateScreen();
+              enterGateState(GS_WAITING);
+              return;
+            }
+          } else {
+            enterGateState(GS_WAITING);
+            return;
+          }
+        }
+      }
+    }
+  } else if (gateState == GS_SCANNING) {
     // Animate the progress bar while waiting
     uint32_t elapsed = millis() - gateMs;
     if (elapsed >= SCAN_MS) {
@@ -1904,9 +1999,7 @@ void handleFingerprintUsers() {
   server.send(200, "application/json", response);
 }
 
-// ── POST /api/fingerprint/enroll?name=xxx  → start enrollment ────────────────
-// In reality, this would need to be async or use websocket
-// For now, returns the next available ID and web app polls status
+// ── GET/POST /api/fingerprint/enroll?name=xxx&step=1|2&id=X  ────────────────
 void handleFingerprintEnroll() {
   if (!server.hasArg("name")) {
     server.send(400, "application/json", "{\"error\":\"missing name parameter\"}");
@@ -1914,29 +2007,82 @@ void handleFingerprintEnroll() {
   }
   
   String name = server.arg("name");
-  int nextID = findNextFreeID();
-  
-  if (nextID == -1) {
-    server.send(400, "application/json", "{\"error\":\"all slots full\"}");
+  int step = server.hasArg("step") ? server.arg("step").toInt() : 0;
+  int id = server.hasArg("id") ? server.arg("id").toInt() : findNextFreeID();
+
+  if (id <= 0 || id > 127) {
+    server.send(400, "application/json", "{\"error\":\"no valid slot ID available\"}");
     return;
   }
-  
-  // In dummy mode, immediately add user
+
+  // If sensor not yet available, try to re-probe before giving up
   if (!fpSensorAvailable) {
-    addUser(nextID, name.c_str());
-    char buf[128];
-    snprintf(buf, sizeof(buf), "{\"success\":true,\"id\":%d,\"message\":\"User enrolled (dummy mode)\"}", nextID);
+    Serial.println("[API] Sensor not ready — attempting re-probe...");
+    if (!initFingerprintSensor()) {
+      server.send(503, "application/json", "{\"success\":false,\"status\":\"error\",\"message\":\"Sensor not found. Check wiring: Sensor TX -> GPIO16, Sensor RX -> GPIO17.\"}");
+      return;
+    }
+  }
+
+  // Real optical biometric sensor enrollment steps
+  if (step == 1) {
+    // Step 1: First capture
+    uint8_t p = finger.getImage();
+    if (p == FINGERPRINT_NOFINGER) {
+      server.send(200, "application/json", "{\"success\":false,\"status\":\"waiting_finger\",\"message\":\"Waiting for finger on sensor...\"}");
+      return;
+    }
+    if (p != FINGERPRINT_OK) {
+      server.send(200, "application/json", "{\"success\":false,\"status\":\"error\",\"message\":\"Failed to capture image\"}");
+      return;
+    }
+    p = finger.image2Tz(1);
+    if (p != FINGERPRINT_OK) {
+      server.send(200, "application/json", "{\"success\":false,\"status\":\"error\",\"message\":\"Failed to convert image\"}");
+      return;
+    }
+    char buf[160];
+    snprintf(buf, sizeof(buf), "{\"success\":true,\"status\":\"step1_ok\",\"id\":%d,\"message\":\"First scan OK. Remove and place same finger again.\"}", id);
     server.send(200, "application/json", buf);
-    Serial.printf("[API] Enrolled user '%s' at ID #%d (dummy)\n", name.c_str(), nextID);
+    Serial.printf("[API] FP Step 1 captured for ID #%d\n", id);
+    return;
+  } else if (step == 2) {
+    // Step 2: Second capture & model creation
+    uint8_t p = finger.getImage();
+    if (p == FINGERPRINT_NOFINGER) {
+      server.send(200, "application/json", "{\"success\":false,\"status\":\"waiting_finger\",\"message\":\"Place same finger on sensor again...\"}");
+      return;
+    }
+    if (p != FINGERPRINT_OK) {
+      server.send(200, "application/json", "{\"success\":false,\"status\":\"error\",\"message\":\"Failed to capture confirmation image\"}");
+      return;
+    }
+    p = finger.image2Tz(2);
+    if (p != FINGERPRINT_OK) {
+      server.send(200, "application/json", "{\"success\":false,\"status\":\"error\",\"message\":\"Failed to convert confirmation image\"}");
+      return;
+    }
+    p = finger.createModel();
+    if (p != FINGERPRINT_OK) {
+      server.send(200, "application/json", "{\"success\":false,\"status\":\"mismatch\",\"message\":\"Prints did not match\"}");
+      Serial.println("[API] FP Step 2 prints did not match");
+      return;
+    }
+    p = finger.storeModel(id);
+    if (p != FINGERPRINT_OK) {
+      server.send(200, "application/json", "{\"success\":false,\"status\":\"error\",\"message\":\"Failed to store model in sensor\"}");
+      return;
+    }
+    addUser(id, name.c_str());
+    char buf[180];
+    snprintf(buf, sizeof(buf), "{\"success\":true,\"status\":\"enrolled\",\"id\":%d,\"name\":\"%s\",\"message\":\"Fingerprint enrolled successfully!\"}", id, name.c_str());
+    server.send(200, "application/json", buf);
+    Serial.printf("[API] FP Enrolled user '%s' at ID #%d\n", name.c_str(), id);
     return;
   }
-  
-  // With real sensor, return ID and instruct to use TFT
-  char buf[256];
-  snprintf(buf, sizeof(buf), 
-    "{\"success\":false,\"id\":%d,\"message\":\"Please use TFT display to complete fingerprint enrollment\"}", 
-    nextID);
-  server.send(200, "application/json", buf);
+
+  // step parameter is required (must be 1 or 2)
+  server.send(400, "application/json", "{\"success\":false,\"status\":\"error\",\"message\":\"Missing or invalid step parameter. Use step=1 or step=2.\"}");
 }
 
 // ── DELETE /api/fingerprint/delete?id=X  → delete fingerprint ────────────────

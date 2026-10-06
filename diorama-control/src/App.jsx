@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Fingerprint, Lock } from 'lucide-react';
+import { Fingerprint, Lock, UserPlus, Cpu } from 'lucide-react';
 import Navigation from './components/Navigation';
 import Home from './Pages/Home/Home';
 import LightAndColor from './Pages/Light&Color/Light&Color';
@@ -7,6 +7,7 @@ import Fountain from './Pages/Fountain/Fountain';
 import Audio from './Pages/Audio/Audio';
 import SettingsPage from './Pages/Settings/Settings';
 import AboutPage from './Pages/About/About';
+import FingerprintRegisterModal from './components/FingerprintRegisterModal';
 import {
   sendLightControl,
   sendFountainControl,
@@ -23,10 +24,11 @@ import './App.css';
 function App() {
   const [activeTab, setActiveTab] = useState('home');
   const [toastMessage, setToastMessage] = useState(null);
+  const [isRegisterModalOpen, setIsRegisterModalOpen] = useState(false);
 
   // Gate-based access state
-  // 'waiting'  → gate closed, showing auth prompt
-  // 'scanning' → fingerprint scan in progress (web simulation)
+  // 'waiting'  → gate closed, listening for physical biometric sensor on TX/RX
+  // 'scanning' → fingerprint scan/verification on hardware sensor
   // 'open'     → gate open, UI unlocked
   // 'goodbye'  → gate just closed, showing goodbye message briefly
   const [gateState, setGateState] = useState('waiting');
@@ -85,23 +87,8 @@ function App() {
     }, 3000);
   };
 
-  // Web-side biometric simulation (tap → 1.8 s scan → open/close gate)
-  const handleWebBiometricScan = () => {
-    if (gateState === 'scanning') return;
-    if (gateState === 'open') {
-      // Close gate
-      closeGate();
-      return;
-    }
-    setGateState('scanning');
-    showToast('🔍 Biometric sensor scanning fingerprint...');
-    setTimeout(() => {
-      openGate();
-    }, 1800);
-  };
-
-  // ── Poll ESP32 full state every 3 s to sync TFT-originated changes ────────
-  // Only updates web app state — never sends commands back to ESP32.
+  // ── Poll ESP32 full state to sync changes & detect physical biometric scans ──
+  // Polls every 1s when waiting (responsive to physical biometric sensor) and every 3s when open
   useEffect(() => {
     const syncFromEsp32 = async () => {
       const s = await getEsp32State();
@@ -109,15 +96,15 @@ function App() {
 
       // ── Gate sync ──────────────────────────────────────────────────────
       if (s.gateOpen === true && gateState !== 'open') {
-        // TFT opened the gate — unlock web app
+        // Physical biometric sensor or TFT opened the gate — unlock web app
         if (goodbyeTimer.current) clearTimeout(goodbyeTimer.current);
         setGateState('open');
         setAppState(prev => ({ ...prev, gateOpen: true }));
-        showToast('✅ Gate opened from TFT — Welcome!');
+        showToast('✅ Biometric fingerprint verified! Welcome!');
         return;
       }
       if (s.gateOpen === false && gateState === 'open') {
-        // TFT closed the gate — show goodbye on web app
+        // TFT or hardware closed the gate — show goodbye on web app
         if (goodbyeTimer.current) clearTimeout(goodbyeTimer.current);
         setGateState('goodbye');
         setAppState(prev => ({ ...prev, gateOpen: false }));
@@ -166,7 +153,9 @@ function App() {
       });
     };
 
-    pollTimer.current = setInterval(syncFromEsp32, 3000);
+    // When gate is waiting, poll fast (1000ms) for snappy response to physical fingerprint scan
+    const intervalTime = gateState === 'open' ? 3000 : 1000;
+    pollTimer.current = setInterval(syncFromEsp32, intervalTime);
     return () => {
       clearInterval(pollTimer.current);
       if (goodbyeTimer.current) clearTimeout(goodbyeTimer.current);
@@ -237,11 +226,17 @@ function App() {
           {/* Park name */}
           <p className="gate-lock-park-name">Silvestre del Moro Park</p>
 
+          {/* Sensor Hardware Badge */}
+          <div className="gate-lock-hw-badge">
+            <Cpu size={14} className="gate-hw-icon" />
+            <span>UART Pins: TX (ESP32 RX 16) &bull; RX (ESP32 TX 17)</span>
+          </div>
+
           {/* Icon */}
-          <div className={`gate-lock-icon-ring ${isScanning ? 'scanning' : ''} ${isGoodbye ? 'goodbye' : ''}`}>
+          <div className={`gate-lock-icon-ring ${isScanning ? 'scanning' : ''} ${isGoodbye ? 'goodbye' : 'listening'}`}>
             {isGoodbye
               ? <Lock size={40} strokeWidth={1.5} />
-              : <Fingerprint size={40} strokeWidth={1.5} className={isScanning ? 'fp-scanning' : ''} />
+              : <Fingerprint size={42} strokeWidth={1.5} className={isScanning ? 'fp-scanning' : 'fp-listening'} />
             }
           </div>
 
@@ -251,41 +246,57 @@ function App() {
               ? 'Goodbye!'
               : isScanning
               ? 'Scanning Fingerprint...'
-              : 'Hi! Welcome!'}
+              : 'Biometric Access'}
           </h1>
 
           <p className="gate-lock-subtitle">
             {isGoodbye
               ? 'Thank you for visiting.'
               : isScanning
-              ? 'Verifying biometric data, please wait...'
+              ? 'Verifying biometric data on sensor, please wait...'
               : (
                 <>
-                  Place your finger on the<br />
-                  biometric scanner to control your diorama
+                  Place your registered finger on the<br />
+                  physical biometric scanner to unlock
                 </>
               )}
           </p>
 
-          {/* Auto-trigger on card click when waiting (simulates biometric sensor) */}
+          {/* Live Sensor Status Pill */}
           {!isScanning && !isGoodbye && (
-            <div 
-              className="gate-lock-biometric-zone"
-              onClick={handleWebBiometricScan}
-              role="button"
-              tabIndex={0}
-              aria-label="Simulate biometric scanner"
-            >
-              <Fingerprint size={48} strokeWidth={1.2} className="biometric-guide-icon" />
-              <p className="biometric-instruction-text">
-                Touch here to simulate sensor
-              </p>
+            <div className="gate-sensor-live-indicator">
+              <span className="live-status-dot" />
+              <span>Physical Sensor Active &bull; Ready</span>
             </div>
           )}
 
           {/* Scanning animation bar */}
           {isScanning && <div className="gate-lock-progress-bar"><div className="gate-lock-progress-fill" /></div>}
+
+          {/* Register Fingerprint Action Button */}
+          {!isScanning && !isGoodbye && (
+            <div className="gate-lock-actions">
+              <button
+                type="button"
+                className="gate-lock-register-btn"
+                onClick={() => setIsRegisterModalOpen(true)}
+              >
+                <UserPlus size={18} />
+                <span>Register Fingerprint</span>
+              </button>
+            </div>
+          )}
         </div>
+
+        {/* Fingerprint Registration Modal */}
+        <FingerprintRegisterModal
+          isOpen={isRegisterModalOpen}
+          onClose={() => setIsRegisterModalOpen(false)}
+          onSuccess={(name) => {
+            showToast(`✅ Fingerprint registered for ${name}! Scan finger to unlock.`);
+          }}
+          showToast={showToast}
+        />
       </div>
     );
   }
@@ -353,6 +364,7 @@ function App() {
               appState={appState}
               setAppState={updateAppState}
               showToast={showToast}
+              onOpenRegister={() => setIsRegisterModalOpen(true)}
             />
           )}
 
@@ -361,8 +373,19 @@ function App() {
           )}
         </div>
       </main>
+
+      {/* Global Fingerprint Registration Modal */}
+      <FingerprintRegisterModal
+        isOpen={isRegisterModalOpen}
+        onClose={() => setIsRegisterModalOpen(false)}
+        onSuccess={(name) => {
+          showToast(`✅ Fingerprint registered for ${name}!`);
+        }}
+        showToast={showToast}
+      />
     </div>
   );
 }
 
 export default App;
+

@@ -378,6 +378,25 @@
   margin-top: 24px;
 }
 
+.sensor-pins-info-box {
+  background: #f0fdf4;
+  border-left: 4px solid #16a34a;
+  border-top: 1px solid #bbf7d0;
+  border-right: 1px solid #bbf7d0;
+  border-bottom: 1px solid #bbf7d0;
+  padding: 10px 14px;
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 0.8rem;
+  color: #166534;
+}
+
+.sensor-pins-info-box strong {
+  color: #14532d;
+}
+
 /* ── Responsive ────────────────────────────────────────────────────────────── */
 @media (max-width: 768px) {
   .btn-enroll-pill span {

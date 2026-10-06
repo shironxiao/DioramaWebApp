@@ -263,3 +263,71 @@ export const getLiveSensors = async () => {
   }
 };
 
+// ── Fingerprint Management ──────────────────────────────────────────────────
+
+export const getFingerprintUsers = async () => {
+  const isSelfHosted =
+    window.location.hostname === esp32Ip ||
+    (window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1');
+  const url = isSelfHosted ? '/api/fingerprint/users' : `http://${esp32Ip}/api/fingerprint/users`;
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 3000);
+    const response = await fetch(url, { signal: controller.signal, mode: 'cors' });
+    clearTimeout(timeoutId);
+    if (!response.ok) return { users: [], sensorAvailable: false };
+    return await response.json();
+  } catch {
+    return { users: [], sensorAvailable: false };
+  }
+};
+
+export const enrollFingerprint = async ({ name, step = 0, id = null }) => {
+  const isSelfHosted =
+    window.location.hostname === esp32Ip ||
+    (window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1');
+  const params = new URLSearchParams();
+  if (name) params.append('name', name);
+  if (step) params.append('step', step);
+  if (id != null) params.append('id', id);
+
+  const url = isSelfHosted
+    ? `/api/fingerprint/enroll?${params.toString()}`
+    : `http://${esp32Ip}/api/fingerprint/enroll?${params.toString()}`;
+
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 4000);
+    const response = await fetch(url, { signal: controller.signal, mode: 'cors' });
+    clearTimeout(timeoutId);
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({}));
+      return { success: false, message: err.error || 'Enrollment request failed' };
+    }
+    return await response.json();
+  } catch (error) {
+    return { success: false, message: error.message || 'ESP32 unreachable' };
+  }
+};
+
+export const deleteFingerprintUser = async (id) => {
+  const isSelfHosted =
+    window.location.hostname === esp32Ip ||
+    (window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1');
+  const url = isSelfHosted
+    ? `/api/fingerprint/delete?id=${id}`
+    : `http://${esp32Ip}/api/fingerprint/delete?id=${id}`;
+
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 3000);
+    const response = await fetch(url, { signal: controller.signal, mode: 'cors' });
+    clearTimeout(timeoutId);
+    if (!response.ok) return { success: false, message: 'Delete failed' };
+    return await response.json();
+  } catch {
+    return { success: false, message: 'ESP32 unreachable' };
+  }
+};
+
+

@@ -1,9 +1,9 @@
 import React, { useState, useEffect } from 'react';
-import { Cpu, Sun, Mic, Palette, Fingerprint, RefreshCw, Plus, Trash2, User } from 'lucide-react';
-import { getLiveSensors } from '../../services/esp32Api';
+import { Cpu, Sun, Mic, Palette, Fingerprint, RefreshCw, Plus, Trash2, User, ShieldCheck } from 'lucide-react';
+import { getLiveSensors, getFingerprintUsers, deleteFingerprintUser } from '../../services/esp32Api';
 import './Settings.css';
 
-export default function SettingsPage({ appState, showToast }) {
+export default function SettingsPage({ appState, showToast, onOpenRegister }) {
   const [sensorsData, setSensorsData] = useState({
     ambientLight: { active: true },
     mic: { active: true },
@@ -15,10 +15,7 @@ export default function SettingsPage({ appState, showToast }) {
   // Fingerprint management state
   const [fingerprintUsers, setFingerprintUsers] = useState([]);
   const [isLoadingUsers, setIsLoadingUsers] = useState(false);
-  const [showEnrollForm, setShowEnrollForm] = useState(false);
-  const [newUserName, setNewUserName] = useState('');
-  const [isEnrolling, setIsEnrolling] = useState(false);
-  const [sensorAvailable, setSensorAvailable] = useState(false);
+  const [sensorAvailable, setSensorAvailable] = useState(true);
 
   const checkSensors = async (manual = false) => {
     if (manual) setIsRefreshing(true);
@@ -56,11 +53,12 @@ export default function SettingsPage({ appState, showToast }) {
   const loadFingerprintUsers = async () => {
     setIsLoadingUsers(true);
     try {
-      const response = await fetch(`${import.meta.env.VITE_ESP32_BASE_URL || 'http://192.168.4.1'}/api/fingerprint/users`);
-      if (response.ok) {
-        const data = await response.json();
+      const data = await getFingerprintUsers();
+      if (data) {
         setFingerprintUsers(data.users || []);
-        setSensorAvailable(data.sensorAvailable || false);
+        if (typeof data.sensorAvailable === 'boolean') {
+          setSensorAvailable(data.sensorAvailable);
+        }
       }
     } catch (error) {
       console.error('Failed to load fingerprint users:', error);
@@ -68,47 +66,14 @@ export default function SettingsPage({ appState, showToast }) {
     setIsLoadingUsers(false);
   };
 
-  // Enroll new user
-  const handleEnrollUser = async () => {
-    if (!newUserName.trim()) {
-      showToast('⚠️ Please enter a name');
-      return;
-    }
-    
-    setIsEnrolling(true);
-    try {
-      const response = await fetch(
-        `${import.meta.env.VITE_ESP32_BASE_URL || 'http://192.168.4.1'}/api/fingerprint/enroll?name=${encodeURIComponent(newUserName)}`
-      );
-      const data = await response.json();
-      
-      if (data.success) {
-        showToast(`✅ ${data.message}`);
-        setNewUserName('');
-        setShowEnrollForm(false);
-        loadFingerprintUsers();
-      } else {
-        showToast(`ℹ️ ${data.message}`);
-        setShowEnrollForm(false);
-      }
-    } catch (error) {
-      showToast('❌ Failed to enroll user');
-    }
-    setIsEnrolling(false);
-  };
-
   // Delete user
   const handleDeleteUser = async (userId) => {
-    if (!confirm(`Delete user ID #${userId}?`)) return;
+    if (!window.confirm(`Delete registered user ID #${userId}?`)) return;
     
     try {
-      const response = await fetch(
-        `${import.meta.env.VITE_ESP32_BASE_URL || 'http://192.168.4.1'}/api/fingerprint/delete?id=${userId}`
-      );
-      const data = await response.json();
-      
-      if (data.success) {
-        showToast(`✅ ${data.message}`);
+      const res = await deleteFingerprintUser(userId);
+      if (res && res.success) {
+        showToast(`✅ ${res.message || 'User deleted'}`);
         loadFingerprintUsers();
       } else {
         showToast('❌ Failed to delete user');
@@ -221,73 +186,42 @@ export default function SettingsPage({ appState, showToast }) {
         <div className="control-card">
           <div className="card-header">
             <div className="card-title-group">
-              <div className="icon-badge purple">
+              <div className="icon-badge green">
                 <Fingerprint size={22} />
               </div>
               <div>
                 <h3 className="card-title">Fingerprint Management</h3>
                 <p className="card-subtitle">
-                  {sensorAvailable ? 'Sensor Connected' : 'Dummy Mode'} • {fingerprintUsers.length} users enrolled
+                  {sensorAvailable ? 'Physical Sensor Connected' : 'Sensor Ready'} • {fingerprintUsers.length} users registered
                 </p>
               </div>
             </div>
             <button 
               type="button" 
               className="btn-enroll-pill"
-              onClick={() => setShowEnrollForm(!showEnrollForm)}
+              onClick={() => {
+                if (onOpenRegister) onOpenRegister();
+              }}
             >
               <Plus size={16} />
-              <span>Enroll New</span>
+              <span>Register Fingerprint</span>
             </button>
           </div>
 
-          {/* Enroll Form */}
-          {showEnrollForm && (
-            <div className="enroll-form-card">
-              <input
-                type="text"
-                placeholder="Enter user name..."
-                value={newUserName}
-                onChange={(e) => setNewUserName(e.target.value)}
-                onKeyPress={(e) => e.key === 'Enter' && handleEnrollUser()}
-                className="enroll-input"
-                maxLength={30}
-              />
-              <div className="enroll-form-actions">
-                <button 
-                  onClick={() => setShowEnrollForm(false)} 
-                  className="btn-cancel"
-                  disabled={isEnrolling}
-                >
-                  Cancel
-                </button>
-                <button 
-                  onClick={handleEnrollUser} 
-                  className="btn-enroll-submit"
-                  disabled={isEnrolling}
-                >
-                  {isEnrolling ? 'Enrolling...' : 'Enroll'}
-                </button>
-              </div>
-              {!sensorAvailable && (
-                <p className="enroll-note">
-                  ℹ️ Dummy mode: User will be added without biometric scan
-                </p>
-              )}
-              {sensorAvailable && (
-                <p className="enroll-note">
-                  ℹ️ You'll need to use the TFT display to scan the fingerprint
-                </p>
-              )}
-            </div>
-          )}
+          {/* Hardware Pins Notice */}
+          <div className="sensor-pins-info-box mt-3 mb-3">
+            <Cpu size={16} className="text-green-600" />
+            <span>
+              <strong>Sensor Hardware Wiring:</strong> Sensor TX &rarr; ESP32 RX (GPIO 16) &bull; Sensor RX &rarr; ESP32 TX (GPIO 17)
+            </span>
+          </div>
 
           {/* Users List */}
           <div className="fingerprint-users-list">
             {isLoadingUsers ? (
               <p className="users-loading">Loading users...</p>
             ) : fingerprintUsers.length === 0 ? (
-              <p className="no-users-msg">No users enrolled yet. Click "Enroll New" to add your first fingerprint.</p>
+              <p className="no-users-msg">No users enrolled yet. Click "Register Fingerprint" to add your first user.</p>
             ) : (
               fingerprintUsers.map((user) => (
                 <div key={user.id} className="user-item-row">
@@ -297,7 +231,7 @@ export default function SettingsPage({ appState, showToast }) {
                     </div>
                     <div className="user-info">
                       <span className="user-name">{user.name}</span>
-                      <span className="user-id-text">ID #{user.id}</span>
+                      <span className="user-id-text">Biometric Slot ID #{user.id}</span>
                     </div>
                   </div>
                   <button

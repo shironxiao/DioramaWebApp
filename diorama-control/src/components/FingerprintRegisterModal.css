@@ -1,0 +1,529 @@
+/* ── Fingerprint Register Modal ────────────────────────────────────────── */
+
+.fp-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.65);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  z-index: 9999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+}
+
+.fp-modal-card {
+  background: #ffffff;
+  border-radius: 28px;
+  max-width: 460px;
+  width: 100%;
+  box-shadow: 0 25px 60px -15px rgba(0, 0, 0, 0.3), 0 0 0 1px rgba(22, 163, 74, 0.15);
+  overflow: hidden;
+  animation: modalPop 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes modalPop {
+  from {
+    opacity: 0;
+    transform: scale(0.92) translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+.fp-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 24px 28px 16px;
+  border-bottom: 1px solid #f1f5f9;
+}
+
+.fp-modal-title-group {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.fp-modal-icon-badge {
+  width: 44px;
+  height: 44px;
+  border-radius: 14px;
+  background: linear-gradient(135deg, #dcfce7, #bbf7d0);
+  border: 1.5px solid #86efac;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #16a34a;
+}
+
+.fp-modal-title {
+  font-size: 1.25rem;
+  font-weight: 700;
+  color: #0f172a;
+  margin: 0;
+  line-height: 1.2;
+}
+
+.fp-modal-subtitle {
+  font-size: 0.82rem;
+  color: #64748b;
+  margin: 2px 0 0;
+}
+
+.fp-modal-close-btn {
+  background: none;
+  border: none;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #94a3b8;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.fp-modal-close-btn:hover {
+  background: #f1f5f9;
+  color: #334155;
+}
+
+/* Hardware badge */
+.fp-hardware-badge {
+  background: #f0fdf4;
+  border-left: 4px solid #16a34a;
+  border-right: 1px solid #bbf7d0;
+  border-top: 1px solid #bbf7d0;
+  border-bottom: 1px solid #bbf7d0;
+  margin: 16px 28px 0;
+  padding: 10px 14px;
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 0.8rem;
+  color: #166534;
+}
+
+.fp-hw-icon {
+  flex-shrink: 0;
+  color: #16a34a;
+}
+
+.fp-modal-body {
+  padding: 24px 28px 28px;
+}
+
+/* Form */
+.fp-form-group {
+  margin-bottom: 20px;
+}
+
+.fp-form-label {
+  display: block;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: #334155;
+  margin-bottom: 8px;
+}
+
+.fp-input-wrapper {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.fp-input-icon {
+  position: absolute;
+  left: 14px;
+  color: #94a3b8;
+}
+
+.fp-text-input {
+  width: 100%;
+  padding: 12px 14px 12px 42px;
+  border: 1.5px solid #e2e8f0;
+  border-radius: 14px;
+  font-size: 0.95rem;
+  color: #0f172a;
+  background: #f8fafc;
+  outline: none;
+  transition: all 0.2s ease;
+}
+
+.fp-text-input:focus {
+  border-color: #16a34a;
+  background: #ffffff;
+  box-shadow: 0 0 0 4px rgba(22, 163, 74, 0.12);
+}
+
+.fp-steps-preview {
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 14px;
+  padding: 14px;
+  margin-bottom: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.fp-step-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: #475569;
+}
+
+.fp-step-number {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: #e2e8f0;
+  color: #475569;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.7rem;
+  font-weight: 700;
+}
+
+.fp-step-arrow {
+  color: #cbd5e1;
+  font-weight: 700;
+}
+
+.fp-notice-message {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.82rem;
+  padding: 10px 14px;
+  border-radius: 12px;
+  margin-bottom: 16px;
+}
+
+.fp-notice-message.error {
+  background: #fef2f2;
+  color: #b91c1c;
+  border: 1px solid #fecaca;
+}
+
+.fp-actions-row {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+}
+
+.btn-fp-cancel {
+  padding: 12px 20px;
+  border-radius: 14px;
+  border: 1.5px solid #e2e8f0;
+  background: #ffffff;
+  color: #64748b;
+  font-size: 0.9rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.btn-fp-cancel:hover {
+  background: #f8fafc;
+  color: #334155;
+  border-color: #cbd5e1;
+}
+
+.btn-fp-primary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 12px 24px;
+  border-radius: 14px;
+  border: none;
+  background: linear-gradient(135deg, #16a34a, #15803d);
+  color: #ffffff;
+  font-size: 0.9rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  box-shadow: 0 4px 14px rgba(22, 163, 74, 0.25);
+}
+
+.btn-fp-primary:hover {
+  background: linear-gradient(135deg, #15803d, #166534);
+  transform: translateY(-1px);
+  box-shadow: 0 6px 20px rgba(22, 163, 74, 0.35);
+}
+
+.btn-fp-primary.full-width {
+  width: 100%;
+}
+
+/* Scanning Flow */
+.fp-scanning-flow {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  padding: 12px 0 6px;
+}
+
+.fp-scanner-ring {
+  width: 110px;
+  height: 110px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #dcfce7, #cffafe);
+  border: 3px solid #86efac;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #16a34a;
+  margin-bottom: 20px;
+  box-shadow: 0 0 0 6px rgba(134, 239, 172, 0.2), 0 8px 24px rgba(22, 163, 74, 0.25);
+}
+
+.fp-scanner-ring.active {
+  animation: fpScannerPulse 1.4s ease-in-out infinite;
+}
+
+.fp-scanner-ring.waiting {
+  background: linear-gradient(135deg, #fef9c3, #fef08a);
+  border-color: #facc15;
+  color: #ca8a04;
+}
+
+@keyframes fpScannerPulse {
+  0%, 100% {
+    transform: scale(1);
+    box-shadow: 0 0 0 6px rgba(134, 239, 172, 0.25), 0 8px 24px rgba(22, 163, 74, 0.25);
+  }
+  50% {
+    transform: scale(1.05);
+    box-shadow: 0 0 0 14px rgba(134, 239, 172, 0.12), 0 12px 32px rgba(22, 163, 74, 0.35);
+  }
+}
+
+.fp-animated-scan-icon {
+  animation: fpIconGlow 1.2s ease-in-out infinite alternate;
+}
+
+@keyframes fpIconGlow {
+  from { opacity: 0.6; transform: scale(0.95); }
+  to   { opacity: 1; transform: scale(1.05); }
+}
+
+.fp-step-progress-indicator {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 16px;
+}
+
+.fp-progress-dot {
+  font-size: 0.76rem;
+  font-weight: 700;
+  padding: 4px 10px;
+  border-radius: 20px;
+  background: #f1f5f9;
+  color: #94a3b8;
+}
+
+.fp-progress-dot.current {
+  background: #dcfce7;
+  color: #166534;
+  border: 1px solid #86efac;
+}
+
+.fp-progress-dot.done {
+  background: #ecfdf5;
+  color: #059669;
+}
+
+.fp-progress-connector {
+  width: 24px;
+  height: 2px;
+  background: #cbd5e1;
+}
+
+.fp-flow-title {
+  font-size: 1.35rem;
+  font-weight: 800;
+  color: #0f172a;
+  margin: 0 0 8px;
+}
+
+.fp-flow-description {
+  font-size: 0.92rem;
+  color: #475569;
+  line-height: 1.5;
+  margin: 0 0 20px;
+  max-width: 340px;
+}
+
+.fp-scanning-pulse-bar {
+  width: 100%;
+  height: 6px;
+  background: #e2e8f0;
+  border-radius: 99px;
+  overflow: hidden;
+  margin-bottom: 18px;
+}
+
+.fp-pulse-bar-fill {
+  height: 100%;
+  width: 40%;
+  background: linear-gradient(90deg, #16a34a, #0891b2);
+  border-radius: 99px;
+  animation: pulseBarAnim 1.6s ease-in-out infinite alternate;
+}
+
+@keyframes pulseBarAnim {
+  from { width: 10%; margin-left: 0%; }
+  to   { width: 50%; margin-left: 50%; }
+}
+
+.fp-fallback-tip {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.78rem;
+  color: #94a3b8;
+}
+
+.btn-mock-complete {
+  background: none;
+  border: 1px dashed #cbd5e1;
+  padding: 4px 12px;
+  border-radius: 8px;
+  font-size: 0.72rem;
+  color: #64748b;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.btn-mock-complete:hover {
+  border-color: #16a34a;
+  color: #16a34a;
+  background: #f0fdf4;
+}
+
+/* Success Flow */
+.fp-success-flow {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  padding: 12px 0 6px;
+}
+
+.fp-success-icon-ring {
+  width: 90px;
+  height: 90px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #dcfce7, #bbf7d0);
+  border: 2px solid #86efac;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #16a34a;
+  margin-bottom: 18px;
+  box-shadow: 0 8px 24px rgba(22, 163, 74, 0.25);
+}
+
+.fp-success-title {
+  font-size: 1.4rem;
+  font-weight: 800;
+  color: #0f172a;
+  margin: 0 0 8px;
+}
+
+.fp-success-description {
+  font-size: 0.95rem;
+  color: #475569;
+  margin: 0 0 16px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+}
+
+.fp-slot-pill {
+  display: inline-block;
+  background: #e0f2fe;
+  color: #0284c7;
+  font-weight: 700;
+  font-size: 0.8rem;
+  padding: 3px 10px;
+  border-radius: 12px;
+  border: 1px solid #bae6fd;
+}
+
+.fp-success-tips {
+  background: #f0fdf4;
+  border: 1px solid #bbf7d0;
+  border-radius: 14px;
+  padding: 12px 16px;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  font-size: 0.82rem;
+  color: #166534;
+  text-align: left;
+  line-height: 1.45;
+  margin-bottom: 24px;
+  width: 100%;
+}
+
+.fp-shield-icon {
+  flex-shrink: 0;
+  color: #16a34a;
+  margin-top: 1px;
+}
+
+/* Error Flow */
+.fp-error-flow {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  padding: 12px 0 6px;
+}
+
+.fp-error-icon-ring {
+  width: 90px;
+  height: 90px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #fee2e2, #fecaca);
+  border: 2px solid #fca5a5;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #dc2626;
+  margin-bottom: 18px;
+  box-shadow: 0 8px 24px rgba(220, 38, 38, 0.2);
+}
+
+.fp-error-title {
+  font-size: 1.4rem;
+  font-weight: 800;
+  color: #991b1b;
+  margin: 0 0 8px;
+}
+
+.fp-error-description {
+  font-size: 0.92rem;
+  color: #64748b;
+  margin: 0 0 24px;
+  max-width: 320px;
+  line-height: 1.5;
+}
