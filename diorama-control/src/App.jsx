@@ -154,14 +154,9 @@ function App() {
         set('audioPlaying',     s.audioPlaying);
         set('fountainColor',    s.fountainColor);
         set('fountainAuxColor', s.fountainAuxColor);
+        set('circleColor',      s.circleColor);
 
-        // Only sync circleColor from ESP32 when NOT in Colorful mode.
-        // In Colorful mode the user is actively editing colors — don't overwrite.
-        if (prev.lightingMode !== 'Colorful') {
-          set('circleColor', s.circleColor);
-        }
-
-        // Audio track — keep extension so replay works (/api/audio/play?file=001.mp3)
+        // Audio track — only update if ESP32 has one and it's different
         if (s.audioTrack && s.audioTrack !== '' && prev.audioTrack !== s.audioTrack) {
           next.audioTrack = s.audioTrack;
           changed = true;
@@ -200,10 +195,6 @@ function App() {
       }
       if (next.fountainAuxColor !== prev.fountainAuxColor) {
         sendColorControl(next.fountainAuxColor, 'right');
-      }
-      // circleColor drives zone[2] (center) which is the actual PWM output strip
-      if (next.circleColor !== prev.circleColor) {
-        sendColorControl(next.circleColor, 'center');
       }
       if (next.lightingMode !== prev.lightingMode) {
         sendModeControl(next.lightingMode);

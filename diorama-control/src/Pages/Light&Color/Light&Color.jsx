@@ -94,11 +94,11 @@ export default function LightAndColor({ appState, setAppState, showToast }) {
     }
   };
 
-  // Scan Color Sensor Handler — ESP32 reads Serial RGB from secondary MCU
+  // Scan Color Sensor Handler — reads from TCS3200 via ESP32
   const handleScanColor = async () => {
     if (isScanning) return;
     setIsScanning(true);
-    showToast('🔍 Color sensor scanning target object...');
+    showToast('🔍 TCS3200 Color Sensor scanning target object...');
     const scannedHex = await scanColorSensor();
     if (scannedHex) {
       setCurrentColor(scannedHex);
@@ -264,7 +264,7 @@ export default function LightAndColor({ appState, setAppState, showToast }) {
                     <span className="hex-mini-tag">{(currentColor || '').toUpperCase()}</span>
                   </div>
                   <span className="card-status-subtext">
-                    {isColorsOpen ? (isScanning ? 'Color sensor scanning...' : 'Pick a color or scan with sensor') : 'Tap to open color tools'}
+                    {isColorsOpen ? (isScanning ? 'TCS3200 scanning...' : 'Pick a color or scan with sensor') : 'Tap to open color tools'}
                   </span>
                 </div>
               </div>
@@ -289,7 +289,7 @@ export default function LightAndColor({ appState, setAppState, showToast }) {
                     className={`btn-amber-sensor ${isScanning ? 'is-scanning' : ''}`}
                     onClick={(e) => { e.stopPropagation(); handleScanColor(); }}
                     disabled={isScanning}
-                    title="Detect color via Serial color sensor node"
+                    title="Detect color with TCS3200 sensor"
                   >
                     {isScanning ? (
                       <><Loader2 size={16} className="spin-icon" /><span>Scanning Color...</span></>
