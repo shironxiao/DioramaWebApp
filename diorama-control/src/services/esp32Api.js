@@ -140,27 +140,6 @@ export const getGateStatus = async () => {
   }
 };
 
-export const scanColorSensor = async () => {
-  const isSelfHosted =
-    window.location.hostname === esp32Ip ||
-    (window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1');
-  const url = isSelfHosted ? '/api/color-sensor' : `http://${esp32Ip}/api/color-sensor`;
-  try {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 4000);
-    const response = await fetch(url, { signal: controller.signal, mode: 'cors' });
-    clearTimeout(timeoutId);
-    if (!response.ok) return null;
-    const data = await response.json();
-    // Expect ESP32: { "r": 180, "g": 120, "b": 60 }
-    if (data.r == null) return null;
-    const toHex = (v) => Math.max(0, Math.min(255, Number(v))).toString(16).padStart(2, '0');
-    return `#${toHex(data.r)}${toHex(data.g)}${toHex(data.b)}`;
-  } catch {
-    return null;
-  }
-};
-
 // ── Audio / SD-card commands ──────────────────────────────────────────────────
 
 /**
@@ -329,5 +308,4 @@ export const deleteFingerprintUser = async (id) => {
     return { success: false, message: 'ESP32 unreachable' };
   }
 };
-
 

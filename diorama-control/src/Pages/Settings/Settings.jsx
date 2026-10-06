@@ -1,13 +1,12 @@
 import React, { useState, useEffect } from 'react';
-import { Cpu, Sun, Mic, Palette, Fingerprint, RefreshCw, Plus, Trash2, User, ShieldCheck } from 'lucide-react';
+import { Cpu, Sun, Mic, Fingerprint, RefreshCw, Plus, Trash2, User, ShieldCheck } from 'lucide-react';
 import { getLiveSensors, getFingerprintUsers, deleteFingerprintUser } from '../../services/esp32Api';
 import './Settings.css';
 
 export default function SettingsPage({ appState, showToast, onOpenRegister }) {
   const [sensorsData, setSensorsData] = useState({
-    ambientLight: { active: true },
+    ambientLight: { active: false, lux: null },
     mic: { active: true },
-    colorSensor: { active: true },
     biometric: { active: true }
   });
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -23,13 +22,11 @@ export default function SettingsPage({ appState, showToast, onOpenRegister }) {
     if (data) {
       setSensorsData({
         ambientLight: {
-          active: data.ambientLight ? true : !!appState.autoDimming
+          active: data.ambientLight?.connected === true,
+          lux: data.ambientLight?.connected ? data.ambientLight.lux : null
         },
         mic: {
           active: data.mic ? true : !!appState.soundReactiveOn
-        },
-        colorSensor: {
-          active: data.colorSensor ? !!data.colorSensor.connected : true
         },
         biometric: {
           active: true // Biometric sensor is always active & functioning on gate
@@ -39,9 +36,8 @@ export default function SettingsPage({ appState, showToast, onOpenRegister }) {
     } else {
       // Fallback based on app state
       setSensorsData({
-        ambientLight: { active: true },
+        ambientLight: { active: false, lux: null },
         mic: { active: !!appState.soundReactiveOn },
-        colorSensor: { active: true },
         biometric: { active: true }
       });
       if (manual) showToast('Sensor status updated.');
@@ -133,7 +129,9 @@ export default function SettingsPage({ appState, showToast, onOpenRegister }) {
               </div>
               <span className={`sensor-val ${sensorsData.ambientLight.active ? 'active' : 'inactive'}`}>
                 <span className={`dot ${sensorsData.ambientLight.active ? 'green-dot' : 'muted-dot'}`}></span>
-                {sensorsData.ambientLight.active ? 'Active' : 'Inactive'}
+                {sensorsData.ambientLight.active
+                  ? `${Number(sensorsData.ambientLight.lux).toFixed(1)} lx`
+                  : 'Offline'}
               </span>
             </div>
 
@@ -149,19 +147,7 @@ export default function SettingsPage({ appState, showToast, onOpenRegister }) {
               </span>
             </div>
 
-            {/* 3. Color Sensor */}
-            <div className="sensor-item-row">
-              <div className="sensor-item-left">
-                <Palette size={18} className="sensor-item-icon purple" />
-                <span className="sensor-name">Color sensor</span>
-              </div>
-              <span className={`sensor-val ${sensorsData.colorSensor.active ? 'active' : 'inactive'}`}>
-                <span className={`dot ${sensorsData.colorSensor.active ? 'green-dot' : 'muted-dot'}`}></span>
-                {sensorsData.colorSensor.active ? 'Active' : 'Inactive'}
-              </span>
-            </div>
-
-            {/* 4. Biometric Sensor */}
+            {/* 3. Biometric Sensor */}
             <div className="sensor-item-row">
               <div className="sensor-item-left">
                 <Fingerprint size={18} className="sensor-item-icon green" />

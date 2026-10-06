@@ -7,11 +7,12 @@
 
   ── Wiring ──────────────────────────────────────────────────────────────────
   TFT / touch : per User_Setup.h  (T_CLK 18, T_DIN 23, T_DO 19, T_CS 21)
-  SD card     : SCK 14, MISO 33, MOSI 25, CS 13   (HSPI, separate from TFT)
+  SD card     : SCK 14, MISO 35, MOSI 25, CS 13   (HSPI, separate from TFT)
   I2S amp     : BCLK 26, LRC 27, DIN 22           (e.g. MAX98357A)
   Mic         : GPIO 34  (ADC1 analog)
-  RGB LEDs    : R=13, G=14, B=25  (PWM — shared with SD; disable SD when using)
-  Fountain    : GPIO 33            (shared with SD MISO)
+  RGB LEDs    : R=4, G=5, B=12    (PWM; GPIO 5 and 12 are boot-strapping pins)
+  I2C bus     : SDA=32, SCL=33
+  Fountain    : GPIO 2            (boot-strapping pin; hardware output not enabled)
   Fingerprint : RX2=16 ← sensor TX,  TX2=17 → sensor RX  (UART2)
   Gate servo  : GPIO 15
 
@@ -68,7 +69,7 @@ struct FingerprintUser {
 
 // ── Pins ─────────────────────────────────────────────────────────────────────
 #define SD_SCK    14
-#define SD_MISO   33
+#define SD_MISO   35
 #define SD_MOSI   25
 #define SD_CS     13
 #define I2S_BCLK  26
@@ -76,10 +77,12 @@ struct FingerprintUser {
 #define I2S_DOUT  22
 #define MIC_PIN   34
 
-#define RED_PIN      13
-#define GREEN_PIN    14
-#define BLUE_PIN     25
-#define FOUNTAIN_PIN 33   // shared with SD MISO — see note above
+#define RED_PIN      4
+#define GREEN_PIN    5
+#define BLUE_PIN     12
+#define I2C_SDA_PIN  32
+#define I2C_SCL_PIN  33
+#define FOUNTAIN_PIN 2
 #define GATE_PIN     15   // gate servo / relay
 
 // Fingerprint sensor pins (UART2)
@@ -209,8 +212,10 @@ float lvl     = 0;
 int   hueBase = 0;
 RGB   live    = {255, 180, 90};
 
-// Color scan state: 0=idle, 1=scanning, 2=error/no-sensor
-int colorScanState = 0;
+bool ambientSensorAvailable = false;
+float ambientLux = 0.0f;
+uint32_t ambientLastReadMs = 0;
+uint32_t ambientLastDrawMs = 0;
 
 bool wasTouched = false;
 
@@ -259,89 +264,68 @@ void applyHardwareGate(bool open) {
   Serial.printf("[GATE] Actuator: %s\n", open ? "OPEN" : "CLOSED");
 }
 
-// ── Color sensor (TCS34725 via I2C) ──────────────────────────────────────────
-// Returns true and fills *out if a reading was obtained.
-// Wire: SDA=21, SCL=22  (standard ESP32 I2C pins).
-// If no sensor is wired this returns false after a quick NAK check.
+// ── Ambient light sensor (VEML7700 via I2C) ──────────────────────────────────
 #include <Wire.h>
-#define TCS_ADDR       0x29
-#define TCS_CMD        0x80
-#define TCS_ENABLE     0x00
-#define TCS_ATIME      0x01
-#define TCS_CONTROL    0x0F
-#define TCS_RDATAL     0x16  // clear, red, green, blue 16-bit each
+constexpr uint8_t VEML7700_ADDR = 0x10;
+constexpr uint8_t VEML7700_ALS_CONF = 0x00;
+constexpr uint8_t VEML7700_ALS_DATA = 0x04;
+constexpr float VEML7700_LUX_PER_COUNT = 0.0576f; // 1/8 gain, 100 ms integration
 
-bool tcsWrite(uint8_t reg, uint8_t val) {
-  Wire.beginTransmission(TCS_ADDR);
-  Wire.write(TCS_CMD | reg);
-  Wire.write(val);
+bool writeVemlRegister(uint8_t reg, uint16_t value) {
+  Wire.beginTransmission(VEML7700_ADDR);
+  Wire.write(reg);
+  Wire.write((uint8_t)(value & 0xFF));
+  Wire.write((uint8_t)(value >> 8));
   return Wire.endTransmission() == 0;
 }
 
-bool readColorSensor(RGB* out) {
-  Wire.begin();
-  // Check if device is present
-  Wire.beginTransmission(TCS_ADDR);
-  if (Wire.endTransmission() != 0) return false;  // no ACK — not wired
+bool readVemlLux(float* lux) {
+  Wire.beginTransmission(VEML7700_ADDR);
+  Wire.write(VEML7700_ALS_DATA);
+  if (Wire.endTransmission(false) != 0) return false;
+  if (Wire.requestFrom(VEML7700_ADDR, (uint8_t)2) != 2) return false;
 
-  // Power on + enable RGBC
-  tcsWrite(TCS_ENABLE,  0x01);        // PON
-  delay(3);
-  tcsWrite(TCS_ENABLE,  0x03);        // PON + AEN
-  tcsWrite(TCS_ATIME,   0xC0);        // ~154 ms integration
-  tcsWrite(TCS_CONTROL, 0x00);        // 1× gain
-  delay(160);                         // wait for integration
-
-  // Read 8 bytes: C_L C_H R_L R_H G_L G_H B_L B_H
-  Wire.beginTransmission(TCS_ADDR);
-  Wire.write(TCS_CMD | 0xA0 | TCS_RDATAL); // auto-increment
-  Wire.endTransmission();
-  Wire.requestFrom((uint8_t)TCS_ADDR, (uint8_t)8);
-  if (Wire.available() < 8) return false;
-
-  uint16_t c = Wire.read() | (Wire.read() << 8);
-  uint16_t r = Wire.read() | (Wire.read() << 8);
-  uint16_t g = Wire.read() | (Wire.read() << 8);
-  uint16_t b = Wire.read() | (Wire.read() << 8);
-
-  if (c == 0) return false;
-  // Scale to 0-255
-  out->r = constrain((uint32_t)r * 255 / c, 0, 255);
-  out->g = constrain((uint32_t)g * 255 / c, 0, 255);
-  out->b = constrain((uint32_t)b * 255 / c, 0, 255);
-
-  Serial.printf("[SENSOR] R=%d G=%d B=%d (raw C=%d)\n", out->r, out->g, out->b, c);
+  uint16_t raw = Wire.read() | (Wire.read() << 8);
+  *lux = raw * VEML7700_LUX_PER_COUNT;
   return true;
 }
 
-// Called from TFT touch — runs the scan and updates cur / sliders
-void triggerColorScan() {
-  colorScanState = 1;   // scanning
-  drawColorPanel();     // show "Scanning..." button state
-
-  RGB scanned;
-  if (readColorSensor(&scanned)) {
-    cur = scanned;
-    // Back-calculate hue/sat from scanned RGB
-    float r = cur.r / 255.f, g = cur.g / 255.f, b2 = cur.b / 255.f;
-    float mx = max(r, max(g, b2)), mn = min(r, min(g, b2)), d = mx - mn;
-    float hh = 0;
-    if (d > 0) {
-      if      (mx == r) hh = 60.f * fmodf((g - b2) / d, 6.f);
-      else if (mx == g) hh = 60.f * ((b2 - r) / d + 2);
-      else              hh = 60.f * ((r - g) / d + 4);
-      if (hh < 0) hh += 360;
-    }
-    hue = (int)hh % 360;
-    sat = (mx == 0) ? 0 : (int)(d / mx * 100);
-    colorScanState = 0;
-    Serial.printf("[SENSOR] Scanned #%02X%02X%02X hue=%d sat=%d\n",
-                  cur.r, cur.g, cur.b, hue, sat);
-  } else {
-    colorScanState = 2;  // error / no sensor
-    Serial.println("[SENSOR] No color sensor found");
+void setupAmbientSensor() {
+  Wire.begin(I2C_SDA_PIN, I2C_SCL_PIN);
+  ambientSensorAvailable = writeVemlRegister(VEML7700_ALS_CONF, 0x0000);
+  if (ambientSensorAvailable) {
+    delay(110);
+    ambientSensorAvailable = readVemlLux(&ambientLux);
   }
-  drawColorPanel();
+  Serial.printf("[VEML7700] %s%s\n",
+                ambientSensorAvailable ? "Connected: " : "Not detected",
+                ambientSensorAvailable ? String(ambientLux, 1).c_str() : "");
+}
+
+void updateAmbientSensor() {
+  uint32_t now = millis();
+  if (now - ambientLastReadMs < 500) return;
+  ambientLastReadMs = now;
+
+  float measuredLux;
+  ambientSensorAvailable = readVemlLux(&measuredLux);
+  if (ambientSensorAvailable) {
+    ambientLux = measuredLux;
+    if (lightMode == "Color Adaptive") {
+      int targetBrightness = constrain(100 - (int)(ambientLux * 80.0f / 500.0f), 20, 100);
+      if (brightness != targetBrightness) {
+        brightness = targetBrightness;
+        pushZones();
+        if (page == P_LIGHTS) drawBrightnessRow();
+      }
+    }
+  }
+
+  if (page == P_LIGHTS && tftMode == M_ADAPT &&
+      now - ambientLastDrawMs >= 500) {
+    ambientLastDrawMs = now;
+    drawModePanel();
+  }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -929,13 +913,11 @@ void drawBrightnessRow() {
 
 // ── Colorful panel ────────────────────────────────────────────────────────────
 //
-//  py+0   : "Color:" swatch  hex  |  [Scan Sensor] button
+//  py+0   : "Color:" swatch and hex, plus live ambient lux
 //  py+20  : Hue gradient slider
 //  py+44  : "Sat" label + value
 //  py+56  : Saturation gradient slider
 //  py+76  : Apply-zone buttons  [ALL] [Left] [Right] [Center]
-//
-// colorScanState: 0=idle 1=scanning 2=done/error (redraws panel)
 //
 void drawColorPanel() {
   int py = BODY_Y + 170;
@@ -948,17 +930,10 @@ void drawColorPanel() {
   char hex[8]; snprintf(hex, sizeof(hex), "#%02X%02X%02X", cur.r, cur.g, cur.b);
   txt(hex, 114, py + 2, 2, C_TEXT, C_BG, TL_DATUM);
 
-  // ── Scan Sensor button (right side of header row) ─────────────────────────
-  // States: idle=purple outline, scanning=amber filled, no-sensor=red
-  bool scanning  = (colorScanState == 1);
-  bool scanError = (colorScanState == 2);
-  uint16_t scanFill   = scanning  ? C_AMBER  : scanError ? C_RED   : C_CARD;
-  uint16_t scanBorder = scanning  ? C_AMBER  : scanError ? C_RED   : C_PURPLE;
-  uint16_t scanTxtCol = (scanning || scanError) ? C_WHITE : C_PURPLE;
-  card(306, py - 3, 164, 22, scanFill, scanBorder);
-  txt(scanning  ? "Scanning..." :
-      scanError ? "No Sensor"   : "Scan Sensor",
-      388, py + 8, 2, scanTxtCol, scanFill, MC_DATUM);
+  char luxLabel[32];
+  if (ambientSensorAvailable) snprintf(luxLabel, sizeof(luxLabel), "%.1f lx", ambientLux);
+  else strlcpy(luxLabel, "Sensor offline", sizeof(luxLabel));
+  txt(luxLabel, 460, py + 8, 2, ambientSensorAvailable ? C_GREEN : C_RED, C_BG, TR_DATUM);
 
   // ── Hue gradient slider ───────────────────────────────────────────────────
   label("Hue", SL_X0, py + 22);
@@ -1020,9 +995,15 @@ void drawModePanel() {
   }
 
   if (tftMode == M_ADAPT) {
-    label("Ambient colour sensor — auto-adapting", SL_X0, py + 4);
-    tft.fillRoundRect(SL_X0, py + 24, SL_X1 - SL_X0, 56, 8, c565(live));
-    tft.drawRoundRect(SL_X0, py + 24, SL_X1 - SL_X0, 56, 8, C_BORDER);
+    char status[48];
+    if (ambientSensorAvailable) {
+      snprintf(status, sizeof(status), "VEML7700: %.1f lx", ambientLux);
+      label(status, SL_X0, py + 4);
+      snprintf(status, sizeof(status), "Adaptive brightness: %d%%", brightness);
+      label(status, SL_X0, py + 30);
+    } else {
+      label("VEML7700 not detected — adaptive dimming paused", SL_X0, py + 4);
+    }
     return;
   }
 }
@@ -1321,9 +1302,7 @@ void updateLive() {
     }
   }
 
-  // Colour Adaptive — stub (connect TCS34725 or similar)
-  // if (lightMode == "Color Adaptive") { ... }
-}
+  }
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // AUDIO HELPERS
@@ -1528,14 +1507,6 @@ void onPress(int x, int y) {
     // ── Colorful mode touch zones ─────────────────────────────────────────
     if (tftMode == M_COLOR) {
       int py = BODY_Y + 170;
-
-      // Scan Sensor button  y = py-3 .. py+19,  x = 306..470
-      if (inRect(x, y, 306, py - 3, 164, 22)) {
-        if (colorScanState != 1) {  // ignore if already scanning
-          triggerColorScan();
-        }
-        return;
-      }
 
       // Hue slider zone  y = py+24 .. py+48
       if (inRect(x, y, SL_X0, py + 24, SL_X1 - SL_X0, 24)) {
@@ -1851,20 +1822,6 @@ void handleSound() {
   server.send(200, "application/json", buf);
 }
 
-// ── GET /api/color-sensor ─────────────────────────────────────────────────────
-void handleColorSensor() {
-  RGB scanned;
-  if (readColorSensor(&scanned)) {
-    char buf[64];
-    snprintf(buf, sizeof(buf),
-             "{\"r\":%d,\"g\":%d,\"b\":%d}",
-             scanned.r, scanned.g, scanned.b);
-    server.send(200, "application/json", buf);
-  } else {
-    server.send(404, "application/json", "{\"error\":\"no sensor\"}");
-  }
-}
-
 // ── GET /api/state  → full diorama state snapshot ────────────────────────────
 // The web app polls this every few seconds to sync changes made on the TFT.
 void handleState() {
@@ -1924,7 +1881,7 @@ void handleState() {
   server.send(200, "application/json", json);
 }
 
-// ── GET /api/sensors  → live reading for all 4 hardware sensors ──────────────
+// ── GET /api/sensors  → live reading for hardware sensors ────────────────────
 void handleSensors() {
   // 1. Microphone sample (GPIO 34 ADC1)
   int mn = 4095, mx = 0;
@@ -1937,39 +1894,25 @@ void handleSensors() {
   int micPct = constrain(map(rawMic, 30, 800, 0, 100), 0, 100);
   bool micDetected = (rawMic > 70);
 
-  // 2. Color & Ambient light reading
-  RGB scanned = { 0, 0, 0 };
-  bool colorOk = readColorSensor(&scanned);
-  int ambientPct = colorOk ? constrain(((int)scanned.r + (int)scanned.g + (int)scanned.b) * 100 / 765, 0, 100)
-                           : constrain(brightness, 10, 95);
-
-  char colorHex[8];
-  snprintf(colorHex, sizeof(colorHex), "#%02X%02X%02X",
-           colorOk ? scanned.r : cur.r,
-           colorOk ? scanned.g : cur.g,
-           colorOk ? scanned.b : cur.b);
-
-  // 3. Biometric / Gate state
+  // 2. Biometric / Gate state
   const char* gateStateStr = (gateState == GS_OPEN)     ? "OPEN"
                            : (gateState == GS_SCANNING) ? "SCANNING"
                            : (gateState == GS_GOODBYE)  ? "GOODBYE"
                            : "WAITING";
 
-  char buf[320];
+  char luxJson[20];
+  if (ambientSensorAvailable) snprintf(luxJson, sizeof(luxJson), "%.2f", ambientLux);
+  else strlcpy(luxJson, "null", sizeof(luxJson));
+
+  char buf[256];
   snprintf(buf, sizeof(buf),
     "{"
-    "\"ambientLight\":{\"percent\":%d,\"lux\":%d,\"source\":\"%s\"},"
+    "\"ambientLight\":{\"connected\":%s,\"lux\":%s,\"brightness\":%d,\"source\":\"VEML7700\"},"
     "\"mic\":{\"level\":%d,\"percent\":%d,\"detected\":%s},"
-    "\"colorSensor\":{\"r\":%d,\"g\":%d,\"b\":%d,\"hex\":\"%s\",\"connected\":%s},"
     "\"biometric\":{\"state\":\"%s\",\"open\":%s,\"authorized\":%s}"
     "}",
-    ambientPct, (int)(ambientPct * 8.5f), colorOk ? "TCS34725 RGBC" : "Calibrated Optic",
+    ambientSensorAvailable ? "true" : "false", luxJson, brightness,
     rawMic, micPct, micDetected ? "true" : "false",
-    colorOk ? scanned.r : cur.r,
-    colorOk ? scanned.g : cur.g,
-    colorOk ? scanned.b : cur.b,
-    colorHex,
-    colorOk ? "true" : "false",
     gateStateStr,
     gateOpen ? "true" : "false",
     (gateState == GS_OPEN) ? "true" : "false"
@@ -2134,7 +2077,6 @@ void setupRoutes() {
   server.on("/api/audio/files",      HTTP_OPTIONS, handleOptions);
   server.on("/api/sound-reactive",   HTTP_OPTIONS, handleOptions);
   server.on("/api/sound",            HTTP_OPTIONS, handleOptions);
-  server.on("/api/color-sensor",     HTTP_OPTIONS, handleOptions);
   server.on("/api/sensors",          HTTP_OPTIONS, handleOptions);
   server.on("/api/state",            HTTP_OPTIONS, handleOptions);
   server.on("/api/fingerprint/users",   HTTP_OPTIONS, handleOptions);
@@ -2155,7 +2097,6 @@ void setupRoutes() {
   server.on("/api/audio/files", HTTP_GET, []() { addCORSHeaders(); handleAudioFiles(); });
   server.on("/api/sound-reactive",HTTP_GET,[]() { addCORSHeaders(); handleSoundReactive(); });
   server.on("/api/sound",  HTTP_GET, []() { addCORSHeaders(); handleSound();        });
-  server.on("/api/color-sensor",HTTP_GET,[]() { addCORSHeaders(); handleColorSensor(); });
   server.on("/api/sensors",HTTP_GET, []() { addCORSHeaders(); handleSensors();      });
   server.on("/api/state",      HTTP_GET,[]() { addCORSHeaders(); handleState();       });
   
@@ -2264,6 +2205,7 @@ void audioTask(void*) { for (;;) { audio.loop(); vTaskDelay(1); } }
 
 void setup() {
   Serial.begin(115200);
+  setupAmbientSensor();
 
   // ── Display ─────────────────────────────────────────────────────────────
   tft.init();
@@ -2336,6 +2278,8 @@ void setup() {
 }
 
 void loop() {
+  updateAmbientSensor();
+
   // HTTP requests — handled on same core as loop (core 1)
   server.handleClient();
 

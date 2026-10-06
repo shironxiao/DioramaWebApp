@@ -1,10 +1,8 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   Lightbulb,
   Mic,
   Palette,
-  Sparkles,
-  Loader2,
   Sun,
   ChevronDown,
   ChevronUp,
@@ -12,7 +10,7 @@ import {
 } from 'lucide-react';
 import DioramaCanvas from '../../components/DioramaCanvas';
 import ColorPicker from '../../components/ColorPicker';
-import { scanColorSensor } from '../../services/esp32Api';
+import { getLiveSensors } from '../../services/esp32Api';
 import './Light&Color.css';
 
 const LIGHTING_MODES = [
@@ -50,8 +48,25 @@ export default function LightAndColor({ appState, setAppState, showToast }) {
   const isColorAdaptive = lightingMode === 'Color Adaptive';
 
   const [currentColor, setCurrentColor] = useState(circleColor || '#D4B78C');
-  const [isScanning, setIsScanning] = useState(false);
   const [isColorsOpen, setIsColorsOpen] = useState(false);
+  const [ambientTelemetry, setAmbientTelemetry] = useState({ connected: false, lux: null, brightness: null });
+
+  useEffect(() => {
+    if (!isColorAdaptive) return undefined;
+    let active = true;
+    const refreshAmbient = async () => {
+      const data = await getLiveSensors();
+      if (active) {
+        setAmbientTelemetry(data?.ambientLight ?? { connected: false, lux: null, brightness: null });
+      }
+    };
+    refreshAmbient();
+    const interval = setInterval(refreshAmbient, 3000);
+    return () => {
+      active = false;
+      clearInterval(interval);
+    };
+  }, [isColorAdaptive]);
 
   // Helper for color conversions
   const hexToRgb = (hex) => {
@@ -92,21 +107,6 @@ export default function LightAndColor({ appState, setAppState, showToast }) {
       setAppState((prev) => ({ ...prev, lightingMode: 'Color Adaptive', soundReactiveOn: false, ambientSensorOn: true }));
       showToast('☀️ Color Adaptive: Ambient light sensor automatically active');
     }
-  };
-
-  // Scan Color Sensor Handler — reads from TCS3200 via ESP32
-  const handleScanColor = async () => {
-    if (isScanning) return;
-    setIsScanning(true);
-    showToast('🔍 TCS3200 Color Sensor scanning target object...');
-    const scannedHex = await scanColorSensor();
-    if (scannedHex) {
-      setCurrentColor(scannedHex);
-      showToast(`✨ Sensor scanned ${scannedHex}! Choose target below to apply.`);
-    } else {
-      showToast('⚠️ Color sensor did not respond. Check ESP32 connection.');
-    }
-    setIsScanning(false);
   };
 
   // Apply Color to Target Handler: 'all', 'left_fountain', 'right_fountain', 'center'
@@ -244,7 +244,7 @@ export default function LightAndColor({ appState, setAppState, showToast }) {
 
         {/* Colorful Mode: Color Control & Detection Sub-Card */}
         {lightingMode === 'Colorful' && (
-          <div className={`control-card mt-2 ${isScanning ? 'card-scanning' : ''} ${isColorsOpen ? 'expanded' : 'collapsed'} color-collapsible-card`}>
+          <div className={`control-card mt-2 ${isColorsOpen ? 'expanded' : 'collapsed'} color-collapsible-card`}>
             <div
               className="card-header color-accordion-header"
               onClick={() => setIsColorsOpen(!isColorsOpen)}
@@ -255,7 +255,7 @@ export default function LightAndColor({ appState, setAppState, showToast }) {
                 </div>
                 <div className="title-stack">
                   <div className="title-with-swatch">
-                    <h3 className="card-title">Color Control & Detection</h3>
+                    <h3 className="card-title">Color Control</h3>
                     <span
                       className="color-mini-swatch"
                       style={{ backgroundColor: currentColor }}
@@ -264,7 +264,7 @@ export default function LightAndColor({ appState, setAppState, showToast }) {
                     <span className="hex-mini-tag">{(currentColor || '').toUpperCase()}</span>
                   </div>
                   <span className="card-status-subtext">
-                    {isColorsOpen ? (isScanning ? 'TCS3200 scanning...' : 'Pick a color or scan with sensor') : 'Tap to open color tools'}
+                    {isColorsOpen ? 'Pick a color and apply it to a lighting zone' : 'Tap to open color tools'}
                   </span>
                 </div>
               </div>
@@ -285,18 +285,6 @@ export default function LightAndColor({ appState, setAppState, showToast }) {
                     <span className="hex-label">HEX: </span>
                     <span className="hex-display">{(currentColor || '').toUpperCase()}</span>
                   </div>
-                  <button
-                    className={`btn-amber-sensor ${isScanning ? 'is-scanning' : ''}`}
-                    onClick={(e) => { e.stopPropagation(); handleScanColor(); }}
-                    disabled={isScanning}
-                    title="Detect color with TCS3200 sensor"
-                  >
-                    {isScanning ? (
-                      <><Loader2 size={16} className="spin-icon" /><span>Scanning Color...</span></>
-                    ) : (
-                      <><Sparkles size={16} /><span>Scan Color Sensor</span></>
-                    )}
-                  </button>
                 </div>
 
                 <div className="apply-targets-section">
@@ -331,15 +319,26 @@ export default function LightAndColor({ appState, setAppState, showToast }) {
                 </div>
                 <div className="title-stack">
                   <h3 className="card-title">Ambient Light Sensor</h3>
-                  <span className="card-status-subtext" style={{ color: '#4ade80' }}>● Active — auto-adjusting brightness</span>
+                  <span className="card-status-subtext" style={{ color: ambientTelemetry.connected ? '#4ade80' : '#f87171' }}>
+                    {ambientTelemetry.connected
+                      ? `● ${Number(ambientTelemetry.lux).toFixed(1)} lx — output ${ambientTelemetry.brightness}%`
+                      : '● VEML7700 offline — adaptive dimming paused'}
+                  </span>
                 </div>
               </div>
-              <span className="sensor-scanning-pill" style={{ background: 'rgba(74,222,128,0.15)', color: '#4ade80', border: '1px solid rgba(74,222,128,0.3)' }}>
-                <span className="scanning-dot" style={{ background: '#4ade80' }}></span> Sensor ON
+              <span className="sensor-scanning-pill" style={{
+                background: ambientTelemetry.connected ? 'rgba(74,222,128,0.15)' : 'rgba(248,113,113,0.15)',
+                color: ambientTelemetry.connected ? '#4ade80' : '#f87171',
+                border: `1px solid ${ambientTelemetry.connected ? 'rgba(74,222,128,0.3)' : 'rgba(248,113,113,0.3)'}`
+              }}>
+                <span className="scanning-dot" style={{ background: ambientTelemetry.connected ? '#4ade80' : '#f87171' }}></span>
+                {ambientTelemetry.connected ? 'VEML7700 ON' : 'Sensor OFF'}
               </span>
             </div>
             <p className="card-description-subtext mt-1">
-              Following room brightness automatically via ambient sensor. No manual control needed.
+              {ambientTelemetry.connected
+                ? 'Brightness responds to measured ambient illuminance from the VEML7700.'
+                : 'Reconnect the VEML7700 on SDA GPIO 32 and SCL GPIO 33 to resume automatic dimming.'}
             </p>
           </div>
         )}
