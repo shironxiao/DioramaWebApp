@@ -11,8 +11,12 @@
   I2S amp     : BCLK 26, LRC 27, DIN 22           (e.g. MAX98357A)
   Mic         : GPIO 34  (ADC1 analog)
   RGB LEDs    : R=13, G=14, B=25  (PWM — shared with SD; disable SD when using)
+                MOSFET driver is inverted: PWM 0 = full bright, PWM 255 = off
   Fountain    : GPIO 33            (shared with SD MISO)
   Fingerprint : RX2=16 ← sensor TX,  TX2=17 → sensor RX  (UART2)
+  Color sensor: RX1=4 ← node TX, TX1=5 → node RX  (UART1 Serial)
+                Color sensing runs on a SEPARATE MCU; this ESP32 only receives
+                Serial lines like "RGB:r,g,b" — do not drive the sensor here.
   Gate servo  : GPIO 15
 
   ── HTTP API (same endpoints as Web App) ────────────────────────────────────
@@ -86,6 +90,12 @@ struct FingerprintUser {
 #define FP_RX_PIN    16
 #define FP_TX_PIN    17
 
+// Color sensor node pins (UART1) — secondary MCU sends detected RGB here
+#define COLOR_RX_PIN  4   // ← color-sensor MCU TX
+#define COLOR_TX_PIN  5   // → color-sensor MCU RX (SCAN requests)
+#define COLOR_BAUD    115200
+#define COLOR_FRESH_MS 3000  // cached reading valid for this long
+
 // Calibration
 #define CALIBRATION_FILE "/DioramaCalData"
 #define REPEAT_CAL       false
@@ -103,6 +113,14 @@ WebServer  server(80);
 // Fingerprint sensor
 HardwareSerial fingerprintSerial(2);
 Adafruit_Fingerprint finger = Adafruit_Fingerprint(&fingerprintSerial);
+
+// Color sensor node (separate MCU → Serial RGB data)
+HardwareSerial colorSerial(1);
+RGB      colorSensorLast   = { 0, 0, 0 };
+bool     colorSensorFresh  = false;
+uint32_t colorSensorMs     = 0;
+char     colorSerialBuf[48];
+uint8_t  colorSerialLen    = 0;
 
 // Fingerprint users array
 FingerprintUser users[MAX_USERS];
@@ -230,20 +248,27 @@ void applyHardwareGate(bool open);
 
 // Push zone colours to PWM pins (brightness-scaled).
 // All three zones share one RGB strip on current wiring → use zone[2] (center).
+// MOSFET circuit inverts the drive: lower PWM = brighter, higher PWM = darker.
+// Logical RGB stays normal (white=255,255,255 in UI/API); only the pin duty is inverted.
 void pushZones() {
   for (int i = 0; i < 3; i++) {
     zone[i].r = constrain(zone[i].r, 0, 255);
     zone[i].g = constrain(zone[i].g, 0, 255);
     zone[i].b = constrain(zone[i].b, 0, 255);
   }
+  brightness = constrain(brightness, 0, 100);
   if (lightsOn) {
-    analogWrite(RED_PIN,   zone[2].r * brightness / 100);
-    analogWrite(GREEN_PIN, zone[2].g * brightness / 100);
-    analogWrite(BLUE_PIN,  zone[2].b * brightness / 100);
+    uint8_t pr = 255 - (uint8_t)(zone[2].r * brightness / 100);
+    uint8_t pg = 255 - (uint8_t)(zone[2].g * brightness / 100);
+    uint8_t pb = 255 - (uint8_t)(zone[2].b * brightness / 100);
+    analogWrite(RED_PIN,   pr);
+    analogWrite(GREEN_PIN, pg);
+    analogWrite(BLUE_PIN,  pb);
   } else {
-    analogWrite(RED_PIN,   0);
-    analogWrite(GREEN_PIN, 0);
-    analogWrite(BLUE_PIN,  0);
+    // Lights off → max PWM (fully dark on inverted MOSFET drive)
+    analogWrite(RED_PIN,   255);
+    analogWrite(GREEN_PIN, 255);
+    analogWrite(BLUE_PIN,  255);
   }
 }
 
@@ -259,59 +284,88 @@ void applyHardwareGate(bool open) {
   Serial.printf("[GATE] Actuator: %s\n", open ? "OPEN" : "CLOSED");
 }
 
-// ── Color sensor (TCS34725 via I2C) ──────────────────────────────────────────
-// Returns true and fills *out if a reading was obtained.
-// Wire: SDA=21, SCL=22  (standard ESP32 I2C pins).
-// If no sensor is wired this returns false after a quick NAK check.
-#include <Wire.h>
-#define TCS_ADDR       0x29
-#define TCS_CMD        0x80
-#define TCS_ENABLE     0x00
-#define TCS_ATIME      0x01
-#define TCS_CONTROL    0x0F
-#define TCS_RDATAL     0x16  // clear, red, green, blue 16-bit each
+// ── Color sensor via Serial (secondary MCU) ──────────────────────────────────
+// The color sensor must NOT run on this ESP32 alongside Web App + TFT.
+// A separate MCU reads the sensor and sends lines over UART1, e.g.:
+//   RGB:120,45,200\n
+//   120,45,200\n
+// Optional: this ESP32 can request a fresh sample with "SCAN\n".
 
-bool tcsWrite(uint8_t reg, uint8_t val) {
-  Wire.beginTransmission(TCS_ADDR);
-  Wire.write(TCS_CMD | reg);
-  Wire.write(val);
-  return Wire.endTransmission() == 0;
+bool parseColorSerialLine(const char* line, RGB* out) {
+  int r = -1, g = -1, b = -1;
+  const char* p = line;
+  if (strncasecmp(p, "RGB:", 4) == 0) p += 4;
+  else if (strncasecmp(p, "COLOR:", 6) == 0) p += 6;
+
+  if (sscanf(p, "%d,%d,%d", &r, &g, &b) != 3) return false;
+  if (r < 0 || r > 255 || g < 0 || g > 255 || b < 0 || b > 255) return false;
+
+  out->r = (uint8_t)r;
+  out->g = (uint8_t)g;
+  out->b = (uint8_t)b;
+  return true;
 }
 
+void setupColorSensorSerial() {
+  colorSerial.begin(COLOR_BAUD, SERIAL_8N1, COLOR_RX_PIN, COLOR_TX_PIN);
+  colorSerialLen = 0;
+  colorSensorFresh = false;
+  Serial.printf("[SENSOR] Color UART1 ready @ %d baud (RX=%d TX=%d)\n",
+                COLOR_BAUD, COLOR_RX_PIN, COLOR_TX_PIN);
+}
+
+// Non-blocking RX — call from loop() so streaming data stays fresh.
+void pollColorSerial() {
+  while (colorSerial.available()) {
+    char c = (char)colorSerial.read();
+    if (c == '\r') continue;
+    if (c == '\n') {
+      colorSerialBuf[colorSerialLen] = '\0';
+      if (colorSerialLen > 0) {
+        RGB parsed;
+        if (parseColorSerialLine(colorSerialBuf, &parsed)) {
+          colorSensorLast  = parsed;
+          colorSensorFresh = true;
+          colorSensorMs    = millis();
+          Serial.printf("[SENSOR] Serial RGB=%d,%d,%d\n",
+                        parsed.r, parsed.g, parsed.b);
+        }
+      }
+      colorSerialLen = 0;
+      continue;
+    }
+    if (colorSerialLen < sizeof(colorSerialBuf) - 1) {
+      colorSerialBuf[colorSerialLen++] = c;
+    } else {
+      colorSerialLen = 0;  // overflow — resync on next newline
+    }
+  }
+}
+
+// Latest Serial cache only (non-blocking — used by /api/sensors).
+bool getColorSensorCached(RGB* out) {
+  pollColorSerial();
+  if (colorSensorFresh && (millis() - colorSensorMs) < COLOR_FRESH_MS) {
+    *out = colorSensorLast;
+    return true;
+  }
+  return false;
+}
+
+// On-demand sample: request SCAN from the node, wait briefly, else use cache.
 bool readColorSensor(RGB* out) {
-  Wire.begin();
-  // Check if device is present
-  Wire.beginTransmission(TCS_ADDR);
-  if (Wire.endTransmission() != 0) return false;  // no ACK — not wired
-
-  // Power on + enable RGBC
-  tcsWrite(TCS_ENABLE,  0x01);        // PON
-  delay(3);
-  tcsWrite(TCS_ENABLE,  0x03);        // PON + AEN
-  tcsWrite(TCS_ATIME,   0xC0);        // ~154 ms integration
-  tcsWrite(TCS_CONTROL, 0x00);        // 1× gain
-  delay(160);                         // wait for integration
-
-  // Read 8 bytes: C_L C_H R_L R_H G_L G_H B_L B_H
-  Wire.beginTransmission(TCS_ADDR);
-  Wire.write(TCS_CMD | 0xA0 | TCS_RDATAL); // auto-increment
-  Wire.endTransmission();
-  Wire.requestFrom((uint8_t)TCS_ADDR, (uint8_t)8);
-  if (Wire.available() < 8) return false;
-
-  uint16_t c = Wire.read() | (Wire.read() << 8);
-  uint16_t r = Wire.read() | (Wire.read() << 8);
-  uint16_t g = Wire.read() | (Wire.read() << 8);
-  uint16_t b = Wire.read() | (Wire.read() << 8);
-
-  if (c == 0) return false;
-  // Scale to 0-255
-  out->r = constrain((uint32_t)r * 255 / c, 0, 255);
-  out->g = constrain((uint32_t)g * 255 / c, 0, 255);
-  out->b = constrain((uint32_t)b * 255 / c, 0, 255);
-
-  Serial.printf("[SENSOR] R=%d G=%d B=%d (raw C=%d)\n", out->r, out->g, out->b, c);
-  return true;
+  pollColorSerial();
+  uint32_t start = millis();
+  colorSerial.print("SCAN\n");
+  while (millis() - start < 400) {
+    pollColorSerial();
+    if (colorSensorFresh && colorSensorMs >= start) {
+      *out = colorSensorLast;
+      return true;
+    }
+    delay(5);
+  }
+  return getColorSensorCached(out);
 }
 
 // Called from TFT touch — runs the scan and updates cur / sliders
@@ -339,7 +393,7 @@ void triggerColorScan() {
                   cur.r, cur.g, cur.b, hue, sat);
   } else {
     colorScanState = 2;  // error / no sensor
-    Serial.println("[SENSOR] No color sensor found");
+    Serial.println("[SENSOR] No Serial color data (check secondary MCU)");
   }
   drawColorPanel();
 }
@@ -1226,7 +1280,7 @@ void updateLive() {
     }
   }
 
-  // Colour Adaptive — stub (connect TCS34725 or similar)
+  // Colour Adaptive — stub (use Serial color cache from secondary MCU)
   // if (lightMode == "Color Adaptive") { ... }
 }
 
@@ -1593,13 +1647,20 @@ void handleMode() {
     lightMode = server.arg("mode");
     lightMode.replace("+", " ");  // URL-encoded spaces
     Serial.printf("[HTTP /api/mode] mode=%s\n", lightMode.c_str());
-    // Sync TFT mode tab
-    if (lightMode == "Basic")                tftMode = M_BASIC;
-    else if (lightMode == "Colorful")        tftMode = M_COLOR;
-    else if (lightMode == "Sound Reactive")  tftMode = M_SOUND;
-    else if (lightMode == "Color Adaptive")  tftMode = M_ADAPT;
-    else                                     tftMode = M_BASIC;
-    if (tftMode == M_BASIC) setAll({255, 180, 90});
+    // Sync TFT mode tab + soundReactive flag
+    if (lightMode == "Basic") {
+      tftMode = M_BASIC; soundReactive = false; setAll({255, 180, 90});
+    } else if (lightMode == "Colorful") {
+      tftMode = M_COLOR; soundReactive = false;
+    } else if (lightMode == "Sound Reactive") {
+      tftMode = M_SOUND; soundReactive = true;
+      sens = soundIntensity;  // sync web intensity → mic sensitivity
+    } else if (lightMode == "Color Adaptive") {
+      tftMode = M_ADAPT; soundReactive = false;
+    } else {
+      tftMode = M_BASIC; soundReactive = false; setAll({255, 180, 90});
+    }
+    pushZones();
     if (page == P_LIGHTS && gateState == GS_OPEN) drawLights();
   }
   jsonOk();
@@ -1633,8 +1694,16 @@ void handleFountain() {
   Serial.printf("[HTTP /api/fountain] state=%s str=%d aux=%d\n",
                 fountainOn ? "on" : "off", fountainStr, fountainAux);
 
-  // Fountain GPIO — shared with SD MISO; only enable if SD is not active
-  // analogWrite(FOUNTAIN_PIN, fountainOn ? map(fountainStr, 0, 100, 0, 255) : 0);
+  // Drive fountain pump via PWM on FOUNTAIN_PIN.
+  // FOUNTAIN_PIN (33) is shared with SD MISO — only safe when SD is idle.
+  // PWM range 0-255: 0 = off, 255 = full speed.
+  if (!sdOk) {
+    // SD not present — safe to use the pin
+    analogWrite(FOUNTAIN_PIN, fountainOn ? map(fountainStr, 0, 100, 0, 255) : 0);
+  } else {
+    // SD is active — log only, do not write to shared pin
+    Serial.println("[FOUNTAIN] SD active — pump GPIO skipped (shared pin)");
+  }
   jsonOk();
 }
 
@@ -1732,15 +1801,27 @@ void handleAudioFiles() {
 
 // ── GET /api/sound-reactive?state=on|off&intensity=0-100 ─────────────────────
 void handleSoundReactive() {
-  if (server.hasArg("state"))     soundReactive   = (server.arg("state") == "on");
-  if (server.hasArg("intensity")) soundIntensity  = constrain(server.arg("intensity").toInt(), 0, 100);
+  if (server.hasArg("intensity")) {
+    soundIntensity = constrain(server.arg("intensity").toInt(), 0, 100);
+    sens = soundIntensity;  // wire web intensity → mic sensitivity immediately
+  }
+  if (server.hasArg("state")) {
+    soundReactive = (server.arg("state") == "on");
+    if (soundReactive) {
+      lightMode = "Sound Reactive";
+      tftMode   = M_SOUND;
+    } else {
+      // OFF — revert to Basic so mic loop in updateLive() stops
+      lightMode     = "Basic";
+      tftMode       = M_BASIC;
+      soundReactive = false;
+      setAll({255, 180, 90});  // restore warm white
+    }
+  }
   Serial.printf("[HTTP /api/sound-reactive] state=%s intensity=%d\n",
                 soundReactive ? "on" : "off", soundIntensity);
-  if (soundReactive) {
-    lightMode = "Sound Reactive";
-    tftMode   = M_SOUND;
-    if (page == P_LIGHTS && gateState == GS_OPEN) drawLights();
-  }
+  pushZones();
+  if (page == P_LIGHTS && gateState == GS_OPEN) drawLights();
   jsonOk();
 }
 
@@ -1779,11 +1860,11 @@ void handleState() {
   snprintf(rightHex,  sizeof(rightHex),  "#%02X%02X%02X", zone[1].r, zone[1].g, zone[1].b);
   snprintf(centerHex, sizeof(centerHex), "#%02X%02X%02X", zone[2].r, zone[2].g, zone[2].b);
 
-  // Current track name — strip leading slash and extension
+  // Current track name — strip leading slash only, KEEP extension for web replay
   char trackName[48] = "";
   if (trackCount > 0) {
     strlcpy(trackName, trackPath[curTrack] + 1, sizeof(trackName));
-    char* dot = strrchr(trackName, '.'); if (dot) *dot = 0;
+    // Do NOT strip extension — web app needs "001.mp3" not "001"
   }
 
   // Escape lightMode string for JSON (replace " with \")
@@ -1842,9 +1923,9 @@ void handleSensors() {
   int micPct = constrain(map(rawMic, 30, 800, 0, 100), 0, 100);
   bool micDetected = (rawMic > 70);
 
-  // 2. Color & Ambient light reading
+  // 2. Color & Ambient light reading (from Serial cache — non-blocking)
   RGB scanned = { 0, 0, 0 };
-  bool colorOk = readColorSensor(&scanned);
+  bool colorOk = getColorSensorCached(&scanned);
   int ambientPct = colorOk ? constrain(((int)scanned.r + (int)scanned.g + (int)scanned.b) * 100 / 765, 0, 100)
                            : constrain(brightness, 10, 95);
 
@@ -1868,7 +1949,7 @@ void handleSensors() {
     "\"colorSensor\":{\"r\":%d,\"g\":%d,\"b\":%d,\"hex\":\"%s\",\"connected\":%s},"
     "\"biometric\":{\"state\":\"%s\",\"open\":%s,\"authorized\":%s}"
     "}",
-    ambientPct, (int)(ambientPct * 8.5f), colorOk ? "TCS34725 RGBC" : "Calibrated Optic",
+    ambientPct, (int)(ambientPct * 8.5f), colorOk ? "Serial Color Node" : "Calibrated Optic",
     rawMic, micPct, micDetected ? "true" : "false",
     colorOk ? scanned.r : cur.r,
     colorOk ? scanned.g : cur.g,
@@ -1958,6 +2039,28 @@ void handleFingerprintDelete() {
   }
 }
 
+// ── GET /api/force-sensor?state=on|off  → fountain force sensor toggle ────────
+void handleForceSensor() {
+  // Stub — force sensor is read-only hardware; state is tracked in web only
+  bool state = server.hasArg("state") && server.arg("state") == "on";
+  Serial.printf("[HTTP /api/force-sensor] state=%s\n", state ? "on" : "off");
+  jsonOk();
+}
+
+// ── GET /api/force  → force/pressure sensor reading ─────────────────────────
+void handleForce() {
+  // Stub — no force sensor wired; return inactive reading so web app doesn't break
+  server.send(200, "application/json", "{\"active\":false,\"level\":0,\"force\":0}");
+}
+
+// ── GET /api/control-source?source=web|tft ───────────────────────────────────
+void handleControlSource() {
+  // Stub — both web and TFT always control simultaneously; no lockout needed
+  if (server.hasArg("source"))
+    Serial.printf("[HTTP /api/control-source] source=%s\n", server.arg("source").c_str());
+  jsonOk();
+}
+
 // ── CORS preflight (OPTIONS) ──────────────────────────────────────────────────
 void handleOptions() {
   server.sendHeader("Access-Control-Allow-Origin", "*");
@@ -1994,6 +2097,9 @@ void setupRoutes() {
   server.on("/api/fingerprint/users",   HTTP_OPTIONS, handleOptions);
   server.on("/api/fingerprint/enroll",  HTTP_OPTIONS, handleOptions);
   server.on("/api/fingerprint/delete",  HTTP_OPTIONS, handleOptions);
+  server.on("/api/force-sensor",        HTTP_OPTIONS, handleOptions);
+  server.on("/api/force",               HTTP_OPTIONS, handleOptions);
+  server.on("/api/control-source",      HTTP_OPTIONS, handleOptions);
 
   // GET handlers (wrap with CORS header injection)
   server.on("/api/light",  HTTP_GET, []() { addCORSHeaders(); handleLight();        });
@@ -2017,6 +2123,9 @@ void setupRoutes() {
   server.on("/api/fingerprint/users",  HTTP_GET, []() { addCORSHeaders(); handleFingerprintUsers(); });
   server.on("/api/fingerprint/enroll", HTTP_GET, []() { addCORSHeaders(); handleFingerprintEnroll(); });
   server.on("/api/fingerprint/delete", HTTP_GET, []() { addCORSHeaders(); handleFingerprintDelete(); });
+  server.on("/api/force-sensor",       HTTP_GET, []() { addCORSHeaders(); handleForceSensor();       });
+  server.on("/api/force",              HTTP_GET, []() { addCORSHeaders(); handleForce();              });
+  server.on("/api/control-source",     HTTP_GET, []() { addCORSHeaders(); handleControlSource();      });
 
   // ── Static Web App Files (SPIFFS) ──────────────────────────────────────────
   server.serveStatic("/", SPIFFS, "/");
@@ -2143,6 +2252,14 @@ void setup() {
   pinMode(GATE_PIN, OUTPUT);
   digitalWrite(GATE_PIN, LOW);  // gate closed on boot
 
+  // ── RGB PWM — start inverted-off (MOSFET: 255 = dark) ─────────────────────
+  analogWrite(RED_PIN,   255);
+  analogWrite(GREEN_PIN, 255);
+  analogWrite(BLUE_PIN,  255);
+
+  // ── Color sensor node (UART1 — secondary MCU) ─────────────────────────────
+  setupColorSensorSerial();
+
   // ── Fingerprint sensor ────────────────────────────────────────────────────
   setupFingerprintSensor();
   loadUsers();
@@ -2192,6 +2309,9 @@ void setup() {
 void loop() {
   // HTTP requests — handled on same core as loop (core 1)
   server.handleClient();
+
+  // Color sensor Serial RX (secondary MCU) — keep cache fresh
+  pollColorSerial();
 
   // Gate state machine (timed transitions)
   pollGate();

@@ -161,7 +161,7 @@ export default function AboutPage({ setActiveTab }) {
             ['Lighting', 'RGB LED Modules'],
             ['Sound', 'Electret Microphone Sensor'],
             ['Ambient Light', 'LDR / Ambient Light Sensor'],
-            ['Color Detection', 'TCS3200 Color Sensor'],
+            ['Color Detection', 'Serial Color Sensor Node'],
             ['Water Pump', 'Submersible DC Pump'],
             ['Pressure', 'Force Sensor (FSR)'],
             ['Gate Control', 'RFID RC522 Reader'],
