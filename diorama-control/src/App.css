@@ -2,31 +2,24 @@
 
 .gate-lock-screen {
   min-height: 100vh;
-  width: 100vw;
+  min-height: 100svh;
+  width: 100%;
   display: flex;
   align-items: center;
   justify-content: center;
-  background: linear-gradient(160deg, #e8f5ee 0%, #e0f2fe 50%, #f0fdf4 100%);
-  padding: 24px;
+  background: #ffffff;
+  padding: 24px 20px;
 }
 
 .gate-lock-card {
-  background: rgba(255, 255, 255, 0.92);
-  backdrop-filter: blur(20px);
-  -webkit-backdrop-filter: blur(20px);
-  border-radius: 32px;
-  padding: 48px 40px 40px;
-  max-width: 400px;
+  padding: 32px 20px;
+  max-width: 420px;
   width: 100%;
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 16px;
+  gap: 18px;
   text-align: center;
-  border: 1.5px solid rgba(22, 163, 74, 0.18);
-  box-shadow:
-    0 20px 60px rgba(0, 0, 0, 0.10),
-    0 4px 16px rgba(22, 163, 74, 0.12);
 }
 
 .gate-lock-park-name {
@@ -125,24 +118,6 @@
 
 .gate-lock-scan-btn:active {
   transform: translateY(0);
-}
-
-.gate-lock-hw-badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  background: #f0fdf4;
-  border: 1px solid #bbf7d0;
-  padding: 6px 14px;
-  border-radius: 99px;
-  font-size: 0.75rem;
-  font-weight: 600;
-  color: #166534;
-  margin-bottom: 2px;
-}
-
-.gate-hw-icon {
-  color: #16a34a;
 }
 
 .gate-lock-icon-ring.listening {
@@ -262,10 +237,25 @@
 
 /* ── Responsive ── */
 @media (max-width: 480px) {
-  .gate-lock-card {
-    padding: 36px 24px 32px;
-    border-radius: 24px;
+  .gate-lock-screen {
+    padding: 20px 16px;
   }
-  .gate-lock-title { font-size: 1.6rem; }
-  .gate-lock-icon-ring { width: 80px; height: 80px; }
+
+  .gate-lock-card {
+    padding: 28px 8px;
+    gap: 16px;
+  }
+
+  .gate-lock-title {
+    font-size: clamp(1.45rem, 7vw, 1.75rem);
+  }
+
+  .gate-lock-icon-ring {
+    width: 80px;
+    height: 80px;
+  }
+
+  .gate-lock-subtitle {
+    max-width: 280px;
+  }
 }

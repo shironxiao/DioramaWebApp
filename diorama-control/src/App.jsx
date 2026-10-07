@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Fingerprint, Lock, UserPlus, Cpu } from 'lucide-react';
+import { Fingerprint, Lock } from 'lucide-react';
 import Navigation from './components/Navigation';
 import Home from './Pages/Home/Home';
 import LightAndColor from './Pages/Light&Color/Light&Color';
@@ -23,7 +23,6 @@ import './App.css';
 
 function App() {
   const [activeTab, setActiveTab] = useState('home');
-  const [toastMessage, setToastMessage] = useState(null);
   const [isRegisterModalOpen, setIsRegisterModalOpen] = useState(false);
 
   // Gate-based access state
@@ -34,6 +33,10 @@ function App() {
   const [gateState, setGateState] = useState('waiting');
   const goodbyeTimer = useRef(null);
   const pollTimer    = useRef(null);
+
+  useEffect(() => () => {
+    if (goodbyeTimer.current) clearTimeout(goodbyeTimer.current);
+  }, []);
 
   // Shared application state
   const [appState, setAppState] = useState({
@@ -72,7 +75,6 @@ function App() {
     setGateState('open');
     setAppState((prev) => ({ ...prev, gateOpen: true }));
     sendGateControl(true);
-    showToast('✅ Fingerprint verified! Welcome — you may now interact with the diorama.');
   };
 
   const closeGate = () => {
@@ -80,8 +82,7 @@ function App() {
     setGateState('goodbye');
     setAppState((prev) => ({ ...prev, gateOpen: false }));
     sendGateControl(false);
-    showToast('👋 Goodbye! Thank you for visiting.');
-    // After 3 s return to waiting/auth screen
+    // Return to the fingerprint screen after a brief goodbye state.
     goodbyeTimer.current = setTimeout(() => {
       setGateState('waiting');
     }, 3000);
@@ -93,6 +94,7 @@ function App() {
     const syncFromEsp32 = async () => {
       const s = await getEsp32State();
       if (!s) return; // ESP32 unreachable — keep current state
+      if (gateState === 'goodbye') return;
 
       // ── Gate sync ──────────────────────────────────────────────────────
       if (s.gateOpen === true && gateState !== 'open') {
@@ -100,7 +102,6 @@ function App() {
         if (goodbyeTimer.current) clearTimeout(goodbyeTimer.current);
         setGateState('open');
         setAppState(prev => ({ ...prev, gateOpen: true }));
-        showToast('✅ Biometric fingerprint verified! Welcome!');
         return;
       }
       if (s.gateOpen === false && gateState === 'open') {
@@ -108,7 +109,6 @@ function App() {
         if (goodbyeTimer.current) clearTimeout(goodbyeTimer.current);
         setGateState('goodbye');
         setAppState(prev => ({ ...prev, gateOpen: false }));
-        showToast('👋 Gate closed from TFT — Goodbye!');
         goodbyeTimer.current = setTimeout(() => setGateState('waiting'), 3000);
         return;
       }
@@ -158,7 +158,6 @@ function App() {
     pollTimer.current = setInterval(syncFromEsp32, intervalTime);
     return () => {
       clearInterval(pollTimer.current);
-      if (goodbyeTimer.current) clearTimeout(goodbyeTimer.current);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [gateState]);
@@ -202,10 +201,7 @@ function App() {
     });
   };
 
-  const showToast = (msg) => {
-    setToastMessage(msg);
-    setTimeout(() => setToastMessage(null), 3500);
-  };
+  const showToast = () => {};
 
   // ── Gate Lock Overlay ─────────────────────────────────────────────────────
 
@@ -216,21 +212,9 @@ function App() {
   if (!isGateOpen) {
     return (
       <div className="gate-lock-screen">
-        {toastMessage && (
-          <div className="toast-banner fixed-toast">
-            <span>{toastMessage}</span>
-          </div>
-        )}
-
         <div className="gate-lock-card">
           {/* Park name */}
           <p className="gate-lock-park-name">Silvestre del Moro Park</p>
-
-          {/* Sensor Hardware Badge */}
-          <div className="gate-lock-hw-badge">
-            <Cpu size={14} className="gate-hw-icon" />
-            <span>UART Pins: TX (ESP32 RX 16) &bull; RX (ESP32 TX 17)</span>
-          </div>
 
           {/* Icon */}
           <div className={`gate-lock-icon-ring ${isScanning ? 'scanning' : ''} ${isGoodbye ? 'goodbye' : 'listening'}`}>
@@ -255,10 +239,7 @@ function App() {
               : isScanning
               ? 'Verifying biometric data on sensor, please wait...'
               : (
-                <>
-                  Place your registered finger on the<br />
-                  physical biometric scanner to unlock
-                </>
+                  'Place your registered finger on the physical biometric scanner to unlock'
               )}
           </p>
 
@@ -273,30 +254,7 @@ function App() {
           {/* Scanning animation bar */}
           {isScanning && <div className="gate-lock-progress-bar"><div className="gate-lock-progress-fill" /></div>}
 
-          {/* Register Fingerprint Action Button */}
-          {!isScanning && !isGoodbye && (
-            <div className="gate-lock-actions">
-              <button
-                type="button"
-                className="gate-lock-register-btn"
-                onClick={() => setIsRegisterModalOpen(true)}
-              >
-                <UserPlus size={18} />
-                <span>Register Fingerprint</span>
-              </button>
-            </div>
-          )}
         </div>
-
-        {/* Fingerprint Registration Modal */}
-        <FingerprintRegisterModal
-          isOpen={isRegisterModalOpen}
-          onClose={() => setIsRegisterModalOpen(false)}
-          onSuccess={(name) => {
-            showToast(`✅ Fingerprint registered for ${name}! Scan finger to unlock.`);
-          }}
-          showToast={showToast}
-        />
       </div>
     );
   }
@@ -319,12 +277,6 @@ function App() {
 
       <main className="main-viewport">
         <div className="content-max-width">
-          {toastMessage && (
-            <div className="toast-banner">
-              <span>{toastMessage}</span>
-            </div>
-          )}
-
           {activeTab === 'home' && (
             <Home
               appState={appState}

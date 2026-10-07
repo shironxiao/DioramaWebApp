@@ -93,28 +93,6 @@
   color: #334155;
 }
 
-/* Hardware badge */
-.fp-hardware-badge {
-  background: #f0fdf4;
-  border-left: 4px solid #16a34a;
-  border-right: 1px solid #bbf7d0;
-  border-top: 1px solid #bbf7d0;
-  border-bottom: 1px solid #bbf7d0;
-  margin: 16px 28px 0;
-  padding: 10px 14px;
-  border-radius: 12px;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  font-size: 0.8rem;
-  color: #166534;
-}
-
-.fp-hw-icon {
-  flex-shrink: 0;
-  color: #16a34a;
-}
-
 .fp-modal-body {
   padding: 24px 28px 28px;
 }
@@ -526,4 +504,65 @@
   margin: 0 0 24px;
   max-width: 320px;
   line-height: 1.5;
+}
+
+@media (max-width: 480px) {
+  .fp-modal-overlay {
+    padding: 12px;
+  }
+
+  .fp-modal-card {
+    border-radius: 22px;
+    max-height: calc(100svh - 24px);
+    overflow-y: auto;
+  }
+
+  .fp-modal-header {
+    padding: 20px 18px 14px;
+  }
+
+  .fp-modal-title-group {
+    gap: 10px;
+    min-width: 0;
+  }
+
+  .fp-modal-icon-badge {
+    width: 40px;
+    height: 40px;
+    flex: 0 0 40px;
+  }
+
+  .fp-modal-title {
+    font-size: 1.1rem;
+  }
+
+  .fp-modal-body {
+    padding: 20px 18px 22px;
+  }
+
+  .fp-steps-preview {
+    gap: 5px;
+    padding: 10px 8px;
+  }
+
+  .fp-step-item {
+    gap: 4px;
+    font-size: 0.67rem;
+  }
+
+  .fp-step-arrow {
+    font-size: 0.8rem;
+  }
+}
+
+@media (max-width: 360px) {
+  .fp-actions-row {
+    flex-direction: column-reverse;
+    align-items: stretch;
+  }
+
+  .btn-fp-cancel,
+  .btn-fp-primary {
+    width: 100%;
+  }
 }

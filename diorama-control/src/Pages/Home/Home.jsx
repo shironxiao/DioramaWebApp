@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import { useState } from 'react';
 import {
   Lightbulb,
   Waves,
@@ -20,6 +20,9 @@ export default function Home({ appState, setAppState, setActiveTab, showToast, o
     audioPlaying, audioTrack, volume,
     autoDimming, circleColor, gateOpen
   } = appState;
+  const lightingModeLabel = lightingMode === 'Colorful' ? 'Custom Color' : lightingMode;
+  const isAdaptiveBrightness = lightingMode === 'Color Adaptive';
+  const isSoundReactive = lightingMode === 'Sound Reactive';
 
   const [isScanning, setIsScanning] = useState(false);
 
@@ -82,7 +85,7 @@ export default function Home({ appState, setAppState, setActiveTab, showToast, o
               <div className="title-stack">
                 <h3 className="card-title">Lights</h3>
                 <span className="card-status-subtext">
-                  {lightsOn ? `On - ${lightingMode}` : 'Off'}
+                  {lightsOn ? `On - ${lightingModeLabel}` : 'Off'}
                 </span>
               </div>
             </div>
@@ -96,21 +99,31 @@ export default function Home({ appState, setAppState, setActiveTab, showToast, o
             </label>
           </div>
 
-          <div className="card-slider-group">
-            <div className="slider-label-row">
-              <span>Brightness</span>
-              <span className="value-label">{brightness}%</span>
+          {!isSoundReactive && (
+            <div className="card-slider-group">
+              <div className="slider-label-row">
+                <span>{isAdaptiveBrightness ? 'Auto brightness' : 'Brightness'}</span>
+                <span className="value-label">{brightness}%</span>
+              </div>
+              <input
+                type="range"
+                min="0"
+                max="100"
+                value={brightness}
+                disabled={!lightsOn || isAdaptiveBrightness}
+                className="custom-range-slider"
+                aria-label={isAdaptiveBrightness ? 'Adaptive brightness (read only)' : 'Brightness'}
+                onChange={(e) => {
+                  if (!isAdaptiveBrightness) {
+                    setAppState((prev) => ({ ...prev, brightness: Number(e.target.value) }));
+                  }
+                }}
+              />
+              {isAdaptiveBrightness && (
+                <span className="card-status-subtext">Automatically controlled by the ambient light sensor</span>
+              )}
             </div>
-            <input
-              type="range"
-              min="0"
-              max="100"
-              value={brightness}
-              disabled={!lightsOn}
-              className="custom-range-slider"
-              onChange={(e) => setAppState((prev) => ({ ...prev, brightness: Number(e.target.value) }))}
-            />
-          </div>
+          )}
         </div>
 
         {/* 2. FOUNTAIN CARD */}

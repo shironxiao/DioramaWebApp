@@ -194,10 +194,13 @@ export const getSoundLevel = async () => {
     clearTimeout(timeoutId);
     if (!response.ok) return { detected: false, level: 0 };
     const data = await response.json();
-    // Expect ESP32 to return: { "detected": true/false, "level": 0-1023 }
+    // Sound response includes the current physical RGB output when available.
     return {
       detected: !!data.detected,
-      level: Math.min(1023, Math.max(0, Number(data.level) || 0))
+      level: Math.min(1023, Math.max(0, Number(data.level) || 0)),
+      r: Math.min(255, Math.max(0, Number(data.r) || 0)),
+      g: Math.min(255, Math.max(0, Number(data.g) || 0)),
+      b: Math.min(255, Math.max(0, Number(data.b) || 0))
     };
   } catch {
     return { detected: false, level: 0 };

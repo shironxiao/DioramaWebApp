@@ -17,13 +17,13 @@ const LIGHTING_MODES = [
   {
     id: 'Basic',
     name: 'Basic',
-    desc: 'Simple, steady warm lighting',
+    desc: 'Steady white RGB lighting across the whole diorama',
     icon: Lightbulb
   },
   {
     id: 'Colorful',
-    name: 'Colorful',
-    desc: 'Pick & apply custom colors to each RGB element',
+    name: 'Custom Color',
+    desc: 'Choose steady colors for individual lighting zones',
     icon: Palette
   },
   {
@@ -43,30 +43,33 @@ const LIGHTING_MODES = [
 export default function LightAndColor({ appState, setAppState, showToast }) {
   const {
     lightsOn, brightness, lightingMode, soundReactiveOn,
-    reactionIntensity, circleColor, fountainColor, fountainAuxColor, autoDimming
+    circleColor, fountainColor, fountainAuxColor, autoDimming
   } = appState;
   const isColorAdaptive = lightingMode === 'Color Adaptive';
 
   const [currentColor, setCurrentColor] = useState(circleColor || '#D4B78C');
   const [isColorsOpen, setIsColorsOpen] = useState(false);
   const [ambientTelemetry, setAmbientTelemetry] = useState({ connected: false, lux: null, brightness: null });
+  const [colorTelemetry, setColorTelemetry] = useState({ connected: false, r: 255, g: 255, b: 255 });
+  const isCustomColor = lightingMode === 'Colorful';
 
   useEffect(() => {
-    if (!isColorAdaptive) return undefined;
+    if (!isColorAdaptive && !isCustomColor) return undefined;
     let active = true;
-    const refreshAmbient = async () => {
+    const refreshSensors = async () => {
       const data = await getLiveSensors();
       if (active) {
         setAmbientTelemetry(data?.ambientLight ?? { connected: false, lux: null, brightness: null });
+        setColorTelemetry(data?.colorSensor ?? { connected: false, r: 255, g: 255, b: 255 });
       }
     };
-    refreshAmbient();
-    const interval = setInterval(refreshAmbient, 3000);
+    refreshSensors();
+    const interval = setInterval(refreshSensors, 2000);
     return () => {
       active = false;
       clearInterval(interval);
     };
-  }, [isColorAdaptive]);
+  }, [isColorAdaptive, isCustomColor]);
 
   // Helper for color conversions
   const hexToRgb = (hex) => {
@@ -80,6 +83,7 @@ export default function LightAndColor({ appState, setAppState, showToast }) {
   };
 
   const activeRgb = hexToRgb(currentColor);
+  const activeModeName = LIGHTING_MODES.find((mode) => mode.id === lightingMode)?.name || lightingMode;
 
   const handlePickerChange = (newRgb) => {
     setCurrentColor(rgbToHex(newRgb.r, newRgb.g, newRgb.b));
@@ -93,19 +97,17 @@ export default function LightAndColor({ appState, setAppState, showToast }) {
         lightingMode: 'Basic',
         soundReactiveOn: false,
         ambientSensorOn: false,
-        circleColor: '#D4B78C',
-        fountainColor: '#77898D',
-        fountainAuxColor: '#3B9DB3'
+        circleColor: '#FFFFFF',
+        fountainColor: '#FFFFFF',
+        fountainAuxColor: '#FFFFFF'
       }));
     } else if (modeId === 'Colorful') {
       setAppState((prev) => ({ ...prev, lightingMode: 'Colorful', soundReactiveOn: false, ambientSensorOn: false }));
       setIsColorsOpen(false);
     } else if (modeId === 'Sound Reactive') {
       setAppState((prev) => ({ ...prev, lightingMode: 'Sound Reactive', soundReactiveOn: true, ambientSensorOn: false }));
-      showToast('🎵 Sound Reactive: All RGB lights, fountain & center circle react to sound!');
     } else if (modeId === 'Color Adaptive') {
       setAppState((prev) => ({ ...prev, lightingMode: 'Color Adaptive', soundReactiveOn: false, ambientSensorOn: true }));
-      showToast('☀️ Color Adaptive: Ambient light sensor automatically active');
     }
   };
 
@@ -166,7 +168,7 @@ export default function LightAndColor({ appState, setAppState, showToast }) {
       <div className="section-block">
         <div className="section-header-row">
           <h2 className="section-block-title">Lighting Modes</h2>
-          <span className="section-sub-badge">{lightingMode}</span>
+          <span className="section-sub-badge">{activeModeName}</span>
         </div>
 
         <div className="modes-grid">
@@ -211,33 +213,9 @@ export default function LightAndColor({ appState, setAppState, showToast }) {
                 </div>
                 <div className="title-stack">
                   <h3 className="card-title">Sound-reactive lighting</h3>
-                  <span className="card-status-subtext">{soundReactiveOn ? 'Active — all RGB elements shift with sound' : 'Off'}</span>
+                  <span className="card-status-subtext">Active — RGB lighting follows the sound sensor</span>
                 </div>
               </div>
-              <label className="toggle-switch">
-                <input
-                  type="checkbox"
-                  checked={soundReactiveOn}
-                  onChange={(e) => {
-                    setAppState((prev) => ({ ...prev, soundReactiveOn: e.target.checked }));
-                  }}
-                />
-                <span className="slider round amber-toggle"></span>
-              </label>
-            </div>
-            <div className="card-slider-group gap-3">
-              <div className="slider-label-row">
-                <span>Reaction intensity</span>
-                <span className="value-label">{reactionIntensity}%</span>
-              </div>
-              <input
-                type="range"
-                min="0"
-                max="100"
-                value={reactionIntensity}
-                className="custom-range-slider amber-range"
-                onChange={(e) => setAppState((prev) => ({ ...prev, reactionIntensity: Number(e.target.value) }))}
-              />
             </div>
           </div>
         )}
@@ -279,6 +257,28 @@ export default function LightAndColor({ appState, setAppState, showToast }) {
             {isColorsOpen && (
               <div className="color-collapsible-body">
                 <ColorPicker rgb={activeRgb} onChange={handlePickerChange} />
+
+                <div className="detected-color-row">
+                  <span className="detected-color-status">
+                    <span
+                      className="color-mini-swatch"
+                      style={{ backgroundColor: colorTelemetry.connected
+                        ? rgbToHex(colorTelemetry.r, colorTelemetry.g, colorTelemetry.b)
+                        : '#e2e8f0' }}
+                    />
+                    {colorTelemetry.connected
+                      ? `Sensor detected ${rgbToHex(colorTelemetry.r, colorTelemetry.g, colorTelemetry.b).toUpperCase()}`
+                      : 'Color sensor offline'}
+                  </span>
+                  <button
+                    type="button"
+                    className="btn-amber-sensor"
+                    disabled={!colorTelemetry.connected}
+                    onClick={() => setCurrentColor(rgbToHex(colorTelemetry.r, colorTelemetry.g, colorTelemetry.b))}
+                  >
+                    Use detected color
+                  </button>
+                </div>
 
                 <div className="color-card-footer" style={{ marginTop: 14 }}>
                   <div className="hex-display-group">
@@ -322,7 +322,7 @@ export default function LightAndColor({ appState, setAppState, showToast }) {
                   <span className="card-status-subtext" style={{ color: ambientTelemetry.connected ? '#4ade80' : '#f87171' }}>
                     {ambientTelemetry.connected
                       ? `● ${Number(ambientTelemetry.lux).toFixed(1)} lx — output ${ambientTelemetry.brightness}%`
-                      : '● VEML7700 offline — adaptive dimming paused'}
+                      : '● Ambient light sensor offline — adaptive dimming paused'}
                   </span>
                 </div>
               </div>
@@ -332,13 +332,13 @@ export default function LightAndColor({ appState, setAppState, showToast }) {
                 border: `1px solid ${ambientTelemetry.connected ? 'rgba(74,222,128,0.3)' : 'rgba(248,113,113,0.3)'}`
               }}>
                 <span className="scanning-dot" style={{ background: ambientTelemetry.connected ? '#4ade80' : '#f87171' }}></span>
-                {ambientTelemetry.connected ? 'VEML7700 ON' : 'Sensor OFF'}
+                {ambientTelemetry.connected ? 'AMBIENT SENSOR ON' : 'SENSOR OFF'}
               </span>
             </div>
             <p className="card-description-subtext mt-1">
               {ambientTelemetry.connected
-                ? 'Brightness responds to measured ambient illuminance from the VEML7700.'
-                : 'Reconnect the VEML7700 on SDA GPIO 32 and SCL GPIO 33 to resume automatic dimming.'}
+                ? 'Adaptive brightness follows lux readings from the VEML7700 on I2C.'
+                : 'Waiting for ambient-light readings from the VEML7700.'}
             </p>
           </div>
         )}

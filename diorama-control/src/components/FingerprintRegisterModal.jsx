@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Fingerprint, X, CheckCircle2, AlertCircle, User, Cpu, Sparkles, RefreshCw, ShieldCheck } from 'lucide-react';
+import { Fingerprint, X, CheckCircle2, AlertCircle, User, RefreshCw, ShieldCheck } from 'lucide-react';
 import { enrollFingerprint, getFingerprintUsers } from '../services/esp32Api';
 import './FingerprintRegisterModal.css';
 
@@ -41,7 +41,7 @@ export default function FingerprintRegisterModal({ isOpen, onClose, onSuccess, s
     }
 
     setStep('step1');
-    setStatusMessage('Place your finger on the optical biometric sensor (TX/RX)...');
+    setStatusMessage('Place your finger on the fingerprint scanner...');
     setIsPolling(true);
 
     // Initial step 1 attempt
@@ -93,7 +93,7 @@ export default function FingerprintRegisterModal({ isOpen, onClose, onSuccess, s
       if (attempts >= maxAttempts) {
         clearInterval(pollTimerRef.current);
         setStep('error');
-        setStatusMessage('Timeout waiting for finger. Ensure sensor RX/TX is connected and try again.');
+        setStatusMessage('The scanner did not detect your finger. Check the scanner and try again.');
       }
     }, 1000);
   };
@@ -172,14 +172,6 @@ export default function FingerprintRegisterModal({ isOpen, onClose, onSuccess, s
           </button>
         </div>
 
-        {/* Hardware Pins Notice */}
-        <div className="fp-hardware-badge">
-          <Cpu size={16} className="fp-hw-icon" />
-          <span>
-            <strong>Sensor Pins:</strong> Sensor TX &rarr; ESP32 RX (GPIO 16) &bull; Sensor RX &rarr; ESP32 TX (GPIO 17)
-          </span>
-        </div>
-
         {/* Modal Body */}
         <div className="fp-modal-body">
           {step === 'input' && (
@@ -232,7 +224,6 @@ export default function FingerprintRegisterModal({ isOpen, onClose, onSuccess, s
                   Cancel
                 </button>
                 <button type="submit" className="btn-fp-primary">
-                  <Sparkles size={16} />
                   <span>Start Registration</span>
                 </button>
               </div>
@@ -267,7 +258,7 @@ export default function FingerprintRegisterModal({ isOpen, onClose, onSuccess, s
               </div>
 
               <div className="fp-fallback-tip">
-                <span>Waiting for optical sensor reading on TX/RX...</span>
+                <span>Waiting for the fingerprint scanner...</span>
                 <button
                   type="button"
                   className="btn-mock-complete"
