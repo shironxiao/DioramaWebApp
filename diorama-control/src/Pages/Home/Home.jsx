@@ -20,6 +20,7 @@ export default function Home({ appState, setAppState, setActiveTab, showToast, o
     audioPlaying, audioTrack, volume,
     autoDimming, circleColor, gateOpen
   } = appState;
+  const lightingModeLabel = lightingMode === 'Colorful' ? 'Custom Color' : lightingMode;
 
   const [isScanning, setIsScanning] = useState(false);
 
@@ -82,7 +83,7 @@ export default function Home({ appState, setAppState, setActiveTab, showToast, o
               <div className="title-stack">
                 <h3 className="card-title">Lights</h3>
                 <span className="card-status-subtext">
-                  {lightsOn ? `On - ${lightingMode}` : 'Off'}
+                  {lightsOn ? `On - ${lightingModeLabel}` : 'Off'}
                 </span>
               </div>
             </div>

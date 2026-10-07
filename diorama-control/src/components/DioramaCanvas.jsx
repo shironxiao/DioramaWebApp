@@ -2,7 +2,7 @@ import React, { useEffect, useRef } from 'react';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { STLLoader } from 'three/examples/jsm/loaders/STLLoader.js';
-import { getSoundLevel, getForceLevel } from '../services/esp32Api';
+import { getLiveSensors, getSoundLevel, getForceLevel } from '../services/esp32Api';
 
 export default function DioramaCanvas({
   lightsOn = true,
@@ -29,6 +29,7 @@ export default function DioramaCanvas({
   const gateRef = useRef(null);
   // Sound sensor data polled from ESP32
   const soundDataRef = useRef({ detected: false, level: 0 });
+  const ambientDataRef = useRef({ connected: false, lux: null, brightness: null });
   // Force sensor data polled from ESP32
   const forceDataRef = useRef({ active: false, level: 0, strength: 75 });
 
@@ -94,6 +95,24 @@ export default function DioramaCanvas({
     poll();
     return () => { cancelled = true; soundDataRef.current = { detected: false, level: 0 }; };
   }, [isSoundReactiveMode]);
+
+  useEffect(() => {
+    if (lightingMode !== 'Color Adaptive') {
+      ambientDataRef.current = { connected: false, lux: null, brightness: null };
+      return undefined;
+    }
+    let cancelled = false;
+    const pollAmbient = async () => {
+      const data = await getLiveSensors();
+      if (!cancelled && data?.ambientLight) ambientDataRef.current = data.ambientLight;
+      if (!cancelled) setTimeout(pollAmbient, 3000);
+    };
+    pollAmbient();
+    return () => {
+      cancelled = true;
+      ambientDataRef.current = { connected: false, lux: null, brightness: null };
+    };
+  }, [lightingMode]);
 
   // Poll ESP32 force sensor every 100ms when Force Sensor Control is active
   useEffect(() => {
@@ -755,71 +774,63 @@ export default function DioramaCanvas({
       } = propsRef.current;
 
       const isSoundActive = (lightMode === 'Sound Reactive' || isSoundReactive);
+      const adaptiveBrightness = lightMode === 'Color Adaptive' && ambientDataRef.current.connected
+        ? ambientDataRef.current.brightness
+        : bLevel;
 
       // Sound Reactive: lights + inner circle + fountains + water particles change RGB color
       if (isSoundActive) {
-        const { detected, level } = soundDataRef.current;
-        // In local/simulated preview when offline, generate realistic beat/sound pulse
-        const simBeat = (Math.sin(time * 6) + Math.sin(time * 3.7)) * 0.5 + 0.5;
-        const isDetected = detected || (simBeat > 0.4);
-        const effectiveLevel = detected ? level : (isDetected ? simBeat * 850 : 0);
+        const { detected, level, r, g, b } = soundDataRef.current;
+        const soundIsActive = detected && level > 0;
 
-        if (isDetected) {
-          // Normalize sensor level (0-1023) to 0-1
-          const normalizedLevel = Math.min(1, effectiveLevel / 1023);
-          // Rotation speed: slow at low sound, fast at loud sound
-          plazaRotationAngle += 0.003 + normalizedLevel * 0.032;
+        if (soundIsActive) {
+          const normalizedLevel = Math.min(1, level / 1023);
+          plazaRotationAngle += normalizedLevel * 0.035;
 
-          // Sound Reactive RGB rainbow color shift across ALL elements
-          const hue = (time * 0.5 + normalizedLevel * 0.5) % 1;
-          const dynamicRgb = new THREE.Color().setHSL(hue, 0.95, 0.55);
+          if (isLightsOn) {
+            const dynamicRgb = new THREE.Color(r / 255, g / 255, b / 255);
+            if (lightsGroupRef.current) {
+              const baseIntensity = (bLevel / 100) * 1.3;
+              lightsGroupRef.current.children.forEach((l) => {
+                if (l.color) l.color.copy(dynamicRgb);
+                l.intensity = baseIntensity;
+              });
+            }
 
-          // 1. Point lights color & dynamic sound pulse
-          if (lightsGroupRef.current && isLightsOn) {
-            const baseIntensity = (bLevel / 100) * 1.3;
-            const soundPulse = 0.8 + normalizedLevel * 0.7;
-            lightsGroupRef.current.children.forEach((l) => {
-              if (l.color) l.color.copy(dynamicRgb);
-              l.intensity = baseIntensity * soundPulse;
-            });
-          }
+            if (plazaMeshRef.current && plazaMeshRef.current.material) {
+              plazaMeshRef.current.material.color.copy(dynamicRgb);
+            }
 
-          // 2. Plaza inner circle RGB color
-          if (plazaMeshRef.current && plazaMeshRef.current.material) {
-            plazaMeshRef.current.material.color.copy(dynamicRgb);
-          }
+            if (fountainMeshesRef.current) {
+              fountainMeshesRef.current.forEach((m) => {
+                if (m && m.material) m.material.color.copy(dynamicRgb);
+              });
+            }
 
-          // 3. Fountain meshes (pools + STL models) RGB color
-          if (fountainMeshesRef.current) {
-            fountainMeshesRef.current.forEach((m) => {
-              if (m && m.material) m.material.color.copy(dynamicRgb);
-            });
-          }
-
-          // 4. Fountain water spray particles RGB color
-          if (fountainParticlesRef.current) {
-            fountainParticlesRef.current.forEach((p) => {
-              if (p && p.material) p.material.color.copy(dynamicRgb);
-            });
+            if (fountainParticlesRef.current) {
+              fountainParticlesRef.current.forEach((p) => {
+                if (p && p.material) p.material.color.copy(dynamicRgb);
+              });
+            }
           }
         }
       } else {
-        // Basic / Colorful / Color Adaptive: restore colors based on mode
+        // Basic / Custom Color / Color Adaptive: restore colors based on mode
         const isBasic = lightMode === 'Basic';
 
-        // Point lights: always warm amber
+        // Basic is steady white; other modes retain the warm scene lighting.
         if (lightsGroupRef.current) {
-          const baseIntensity = isLightsOn ? (bLevel / 100) * 1.3 : 0;
-          const warmColor = new THREE.Color(0xffea9f);
+          const baseIntensity = isLightsOn ? (adaptiveBrightness / 100) * 1.3 : 0;
+          const lightColor = new THREE.Color(isBasic ? 0xffffff : 0xffea9f);
           lightsGroupRef.current.children.forEach((l) => {
-            if (l.color) l.color.copy(warmColor);
+            if (l.color) l.color.copy(lightColor);
             l.intensity = baseIntensity;
           });
         }
 
         // Plaza (center circle)
         if (plazaMeshRef.current && plazaMeshRef.current.material) {
-          const col = isBasic ? '#D4B78C' : (curCircleColor || '#D4B78C');
+          const col = isBasic ? '#FFFFFF' : (curCircleColor || '#D4B78C');
           plazaMeshRef.current.material.color.set(col);
         }
 
@@ -829,7 +840,7 @@ export default function DioramaCanvas({
             if (m && m.material) {
               let col;
               if (isBasic) {
-                col = m.userData.isLeft ? '#77898D' : '#3B9DB3';
+                col = '#FFFFFF';
               } else {
                 col = m.userData.isLeft
                   ? (curFountainColor || '#77898D')
@@ -846,7 +857,7 @@ export default function DioramaCanvas({
             if (p && p.material) {
               let col;
               if (isBasic) {
-                col = p.userData.isLeft ? '#77898D' : '#3B9DB3';
+                col = '#FFFFFF';
               } else {
                 col = p.userData.isLeft
                   ? (curFountainColor || '#77898D')

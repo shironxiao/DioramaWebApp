@@ -199,6 +199,28 @@ input:checked + .slider.amber-toggle:before { background: #fff; }
 .hex-label  { font-size: 0.78rem; color: var(--text-3); font-weight: 600; }
 .hex-display { font-family: monospace; font-size: 0.88rem; font-weight: 800; color: var(--c-amber); }
 
+.detected-color-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 14px;
+}
+
+.detected-color-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  color: var(--text-2);
+  font-size: 0.82rem;
+}
+
+.btn-amber-sensor:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
 /* ── Scan button ── */
 .btn-amber-sensor {
   display: inline-flex;
@@ -323,6 +345,7 @@ input:checked + .slider.amber-toggle:before { background: #fff; }
   .mode-card { padding: 10px 12px; border-radius: 14px; gap: 6px; }
   .apply-targets-grid { grid-template-columns: repeat(2,1fr); }
   .btn-amber-sensor { width: 100%; justify-content: center; }
+  .detected-color-row { align-items: stretch; flex-direction: column; }
 }
 
 @media (max-width: 480px) {

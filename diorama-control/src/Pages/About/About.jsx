@@ -6,7 +6,7 @@ import {
 import './About.css';
 
 const features = [
-  { icon: <Lightbulb size={20} />, title: 'Adaptive Lighting', desc: 'RGB LED lights with multiple modes — basic, colorful, sound-reactive, and ambient-adaptive via color sensor.' },
+  { icon: <Lightbulb size={20} />, title: 'Adaptive Lighting', desc: 'RGB LED lights with basic white, custom color, sound-reactive, and ambient-adaptive modes.' },
   { icon: <Droplets size={20} />, title: 'Dual Water Fountain', desc: 'Main and auxiliary spouts with adjustable strength. Force sensor support for pressure-reactive control.' },
   { icon: <RotateCcw size={20} />, title: 'Rotating Inner Plaza', desc: 'The central colonnade plaza can rotate continuously, on demand, or only when the mic detects sound.' },
   { icon: <Music size={20} />, title: 'Ambient Audio', desc: 'Pre-recorded soundscapes play directly into the diorama, bringing the miniature world to life.' },
@@ -160,7 +160,8 @@ export default function AboutPage({ setActiveTab }) {
             ['Microcontroller', 'ESP32'],
             ['Lighting', 'RGB LED Modules'],
             ['Sound', 'Electret Microphone Sensor'],
-            ['Ambient Light', 'VEML7700 Lux Sensor'],
+            ['Ambient Light', 'VEML7700 on I2C'],
+            ['Color Input', 'RGB Sensor Controller over UART'],
             ['Color Control', 'Manual RGB Color Picker'],
             ['Water Pump', 'Submersible DC Pump'],
             ['Pressure', 'Force Sensor (FSR)'],

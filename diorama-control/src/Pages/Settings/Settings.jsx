@@ -1,52 +1,123 @@
-import React, { useState, useEffect } from 'react';
-import { Cpu, Sun, Mic, Fingerprint, RefreshCw, Plus, Trash2, User, ShieldCheck } from 'lucide-react';
+import { useCallback, useEffect, useState } from 'react';
+import { Cpu, Sun, Mic, Fingerprint, RefreshCw, Plus, Trash2, Search, Radio } from 'lucide-react';
 import { getLiveSensors, getFingerprintUsers, deleteFingerprintUser } from '../../services/esp32Api';
 import './Settings.css';
 
-export default function SettingsPage({ appState, showToast, onOpenRegister }) {
-  const [sensorsData, setSensorsData] = useState({
-    ambientLight: { active: false, lux: null },
-    mic: { active: true },
-    biometric: { active: true }
-  });
+const SENSOR_METADATA_KEYS = new Set([
+  'name', 'label', 'type', 'id', 'source', 'connected', 'active',
+  'available', 'enabled', 'status', 'state', 'detected'
+]);
+
+const formatSensorName = (key, sensor = {}) => {
+  const explicitName = sensor.name || sensor.label || sensor.type;
+  const name = String(explicitName || key)
+    .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+    .replace(/[_-]+/g, ' ')
+    .trim();
+  return name ? name.replace(/\b\w/g, (letter) => letter.toUpperCase()) : 'Sensor';
+};
+
+const getSensorStatus = (sensor) => {
+  const status = String(sensor.status ?? sensor.state ?? '').toLowerCase();
+  if (['offline', 'disconnected', 'error', 'unavailable', 'inactive'].includes(status)) return false;
+  if (['online', 'connected', 'ready', 'active'].includes(status)) return true;
+
+  for (const key of ['connected', 'active', 'available', 'enabled']) {
+    if (typeof sensor[key] === 'boolean') return sensor[key];
+  }
+
+  // Legacy firmware reports mic telemetry without a separate availability flag.
+  return true;
+};
+
+const formatSensorReadings = (sensor) => {
+  const rgb = ['r', 'g', 'b'];
+  if (rgb.every((key) => Number.isFinite(Number(sensor[key])))) {
+    return `RGB ${rgb.map((key) => Math.round(Number(sensor[key]))).join(', ')}`;
+  }
+
+  const preferredKeys = ['value', 'reading', 'lux', 'temperature', 'humidity', 'pressure', 'level', 'percent', 'rms', 'peakToPeak'];
+  const readings = preferredKeys
+    .filter((key) => sensor[key] !== undefined && sensor[key] !== null && !SENSOR_METADATA_KEYS.has(key))
+    .map((key) => {
+      const value = sensor[key];
+      const label = key === 'value' || key === 'reading'
+        ? ''
+        : key.replace(/([a-z0-9])([A-Z])/g, '$1 $2');
+      const unit = key === 'lux' ? ' lx'
+        : key === 'temperature' ? ' °C'
+          : key === 'humidity' ? '%'
+            : key === 'pressure' ? ' hPa'
+              : key === 'percent' ? '%'
+                : '';
+      const formatted = typeof value === 'number' ? Number(value.toFixed(2)) : value;
+      return `${label ? `${label}: ` : ''}${formatted}${unit}`;
+    });
+
+  if (typeof sensor.detected === 'boolean') readings.push(sensor.detected ? 'Detected' : 'No activity');
+  return readings.length ? readings.join(' · ') : 'Active';
+};
+
+const parseSensorList = (payload) => {
+  if (!payload || typeof payload !== 'object') return [];
+  const reportedSensors = payload.sensors;
+  const entries = Array.isArray(reportedSensors)
+    ? reportedSensors.map((sensor, index) => [
+      sensor && typeof sensor === 'object'
+        ? sensor.id || sensor.name || `sensor-${index + 1}`
+        : `sensor-${index + 1}`,
+      sensor
+    ])
+    : reportedSensors && typeof reportedSensors === 'object'
+      ? Object.entries(reportedSensors)
+      : Object.entries(payload).filter(([, value]) => value && typeof value === 'object' && !Array.isArray(value));
+
+  return entries
+    .filter(([, sensor]) => sensor !== null && sensor !== undefined)
+    .map(([key, reportedSensor]) => {
+      const sensor = typeof reportedSensor === 'object'
+        ? reportedSensor
+        : { value: reportedSensor };
+      return {
+        id: String(sensor.id ?? key),
+        name: formatSensorName(key, sensor),
+        active: getSensorStatus(sensor),
+        reading: formatSensorReadings(sensor),
+        kind: String(sensor.type ?? key).toLowerCase()
+      };
+    });
+};
+
+export default function SettingsPage({ showToast, onOpenRegister }) {
+  const [sensors, setSensors] = useState([]);
+  const [sensorLoadError, setSensorLoadError] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
   
   // Fingerprint management state
   const [fingerprintUsers, setFingerprintUsers] = useState([]);
   const [isLoadingUsers, setIsLoadingUsers] = useState(false);
   const [sensorAvailable, setSensorAvailable] = useState(true);
+  const [userSearch, setUserSearch] = useState('');
 
-  const checkSensors = async (manual = false) => {
+  const checkSensors = useCallback(async (manual = false) => {
     if (manual) setIsRefreshing(true);
-    const data = await getLiveSensors();
-    if (data) {
-      setSensorsData({
-        ambientLight: {
-          active: data.ambientLight?.connected === true,
-          lux: data.ambientLight?.connected ? data.ambientLight.lux : null
-        },
-        mic: {
-          active: data.mic ? true : !!appState.soundReactiveOn
-        },
-        biometric: {
-          active: true // Biometric sensor is always active & functioning on gate
-        }
-      });
+    try {
+      const data = await getLiveSensors();
+      if (!data) {
+        setSensorLoadError(true);
+        if (manual) showToast('Could not read sensor status from the ESP32.');
+        return;
+      }
+      setSensors(parseSensorList(data));
+      setSensorLoadError(false);
       if (manual) showToast('✅ Sensors status refreshed from ESP32');
-    } else {
-      // Fallback based on app state
-      setSensorsData({
-        ambientLight: { active: false, lux: null },
-        mic: { active: !!appState.soundReactiveOn },
-        biometric: { active: true }
-      });
-      if (manual) showToast('Sensor status updated.');
+    } finally {
+      if (manual) setIsRefreshing(false);
     }
-    if (manual) setIsRefreshing(false);
-  };
+  }, [showToast]);
 
   // Fetch fingerprint users
-  const loadFingerprintUsers = async () => {
+  const loadFingerprintUsers = useCallback(async () => {
     setIsLoadingUsers(true);
     try {
       const data = await getFingerprintUsers();
@@ -60,7 +131,7 @@ export default function SettingsPage({ appState, showToast, onOpenRegister }) {
       console.error('Failed to load fingerprint users:', error);
     }
     setIsLoadingUsers(false);
-  };
+  }, []);
 
   // Delete user
   const handleDeleteUser = async (userId) => {
@@ -74,20 +145,31 @@ export default function SettingsPage({ appState, showToast, onOpenRegister }) {
       } else {
         showToast('❌ Failed to delete user');
       }
-    } catch (error) {
+    } catch {
       showToast('❌ Failed to delete user');
     }
   };
 
+  const normalizedSearch = userSearch.trim().toLowerCase();
+  const filteredFingerprintUsers = fingerprintUsers.filter((user) =>
+    String(user.name || '').toLowerCase().includes(normalizedSearch) ||
+    String(user.id).includes(normalizedSearch)
+  );
+
   useEffect(() => {
-    checkSensors();
-    loadFingerprintUsers();
+    const initialFetch = setTimeout(() => {
+      checkSensors();
+      loadFingerprintUsers();
+    }, 0);
     const interval = setInterval(() => {
       checkSensors();
       loadFingerprintUsers();
     }, 3000);
-    return () => clearInterval(interval);
-  }, [appState.soundReactiveOn, appState.autoDimming]);
+    return () => {
+      clearTimeout(initialFetch);
+      clearInterval(interval);
+    };
+  }, [checkSensors, loadFingerprintUsers]);
 
   return (
     <div className="page-container">
@@ -119,46 +201,32 @@ export default function SettingsPage({ appState, showToast, onOpenRegister }) {
             </button>
           </div>
 
-          <div className="sensor-items-list">
-            
-            {/* 1. Ambient Light Sensor */}
-            <div className="sensor-item-row">
-              <div className="sensor-item-left">
-                <Sun size={18} className="sensor-item-icon amber" />
-                <span className="sensor-name">Ambient light sensor</span>
-              </div>
-              <span className={`sensor-val ${sensorsData.ambientLight.active ? 'active' : 'inactive'}`}>
-                <span className={`dot ${sensorsData.ambientLight.active ? 'green-dot' : 'muted-dot'}`}></span>
-                {sensorsData.ambientLight.active
-                  ? `${Number(sensorsData.ambientLight.lux).toFixed(1)} lx`
-                  : 'Offline'}
-              </span>
-            </div>
-
-            {/* 2. Electret Microphone Sensor */}
-            <div className="sensor-item-row">
-              <div className="sensor-item-left">
-                <Mic size={18} className="sensor-item-icon blue" />
-                <span className="sensor-name">Mic sensor</span>
-              </div>
-              <span className={`sensor-val ${sensorsData.mic.active ? 'active' : 'inactive'}`}>
-                <span className={`dot ${sensorsData.mic.active ? 'green-dot' : 'muted-dot'}`}></span>
-                {sensorsData.mic.active ? 'Active' : 'Inactive'}
-              </span>
-            </div>
-
-            {/* 3. Biometric Sensor */}
-            <div className="sensor-item-row">
-              <div className="sensor-item-left">
-                <Fingerprint size={18} className="sensor-item-icon green" />
-                <span className="sensor-name">Biometric sensor</span>
-              </div>
-              <span className={`sensor-val ${sensorsData.biometric.active ? 'active' : 'inactive'}`}>
-                <span className={`dot ${sensorsData.biometric.active ? 'green-dot' : 'muted-dot'}`}></span>
-                {sensorsData.biometric.active ? 'Active' : 'Inactive'}
-              </span>
-            </div>
-
+          <div className="sensor-items-list" aria-live="polite">
+            {sensorLoadError ? (
+              <p className="sensor-list-message">Unable to reach the ESP32 sensor endpoint. Check the connection and refresh.</p>
+            ) : sensors.length === 0 ? (
+              <p className="sensor-list-message">No sensors are currently reported by the ESP32.</p>
+            ) : sensors.map((sensor) => {
+              const Icon = /finger|biometric/i.test(`${sensor.name} ${sensor.kind}`)
+                ? Fingerprint
+                : /ambient|light|lux/i.test(`${sensor.name} ${sensor.kind}`)
+                  ? Sun
+                  : /mic|sound|audio/i.test(`${sensor.name} ${sensor.kind}`)
+                    ? Mic
+                    : Radio;
+              return (
+                <div className="sensor-item-row" key={sensor.id}>
+                  <div className="sensor-item-left">
+                    <Icon size={18} className="sensor-item-icon blue" />
+                    <span className="sensor-name">{sensor.name}</span>
+                  </div>
+                  <span className={`sensor-val ${sensor.active ? 'active' : 'inactive'}`}>
+                    <span className={`dot ${sensor.active ? 'green-dot' : 'muted-dot'}`}></span>
+                    {sensor.active ? sensor.reading : 'Offline'}
+                  </span>
+                </div>
+              );
+            })}
           </div>
 
           <p className="card-description-subtext mt-3">
@@ -202,14 +270,27 @@ export default function SettingsPage({ appState, showToast, onOpenRegister }) {
             </span>
           </div>
 
+          <label className="fingerprint-search">
+            <Search size={17} aria-hidden="true" />
+            <input
+              type="search"
+              value={userSearch}
+              onChange={(event) => setUserSearch(event.target.value)}
+              placeholder="Search users by name or slot"
+              aria-label="Search fingerprint users by name or slot ID"
+            />
+          </label>
+
           {/* Users List */}
           <div className="fingerprint-users-list">
             {isLoadingUsers ? (
               <p className="users-loading">Loading users...</p>
             ) : fingerprintUsers.length === 0 ? (
-              <p className="no-users-msg">No users enrolled yet. Click "Register Fingerprint" to add your first user.</p>
+              <p className="no-users-msg">No users enrolled yet. Register the first fingerprint from Settings.</p>
+            ) : filteredFingerprintUsers.length === 0 ? (
+              <p className="no-users-msg">No fingerprint users match “{userSearch.trim()}”.</p>
             ) : (
-              fingerprintUsers.map((user) => (
+              filteredFingerprintUsers.map((user) => (
                 <div key={user.id} className="user-item-row">
                   <div className="user-item-left">
                     <div className="user-id-badge">
