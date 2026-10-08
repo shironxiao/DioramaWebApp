@@ -184,6 +184,39 @@
   margin-bottom: 0;
 }
 
+.drainage-pump-toggle {
+  padding: 9px 18px;
+  border: 1px solid #cbd5e1;
+  border-radius: 20px;
+  background: #f1f5f9;
+  color: #475569;
+  font-size: 0.85rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background 0.2s ease, color 0.2s ease, border-color 0.2s ease;
+}
+
+.drainage-pump-toggle.is-on {
+  border-color: #059669;
+  background: #059669;
+  color: #fff;
+}
+
+.drainage-pump-status {
+  margin-top: 14px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: #f1f5f9;
+  color: #475569;
+  font-size: 0.82rem;
+  font-weight: 600;
+}
+
+.drainage-pump-status.is-on {
+  background: #ecfdf5;
+  color: #047857;
+}
+
 /* ── Fingerprint Management ────────────────────────────────────────────────── */
 
 .btn-enroll-pill {

@@ -1,16 +1,16 @@
-﻿import React, { useState } from 'react';
+import { useState } from 'react';
 import {
-  MapPin, Landmark, Cpu, Droplets, Lightbulb, Music, KeyRound,
+  MapPin, Landmark, Cpu, Droplets, Lightbulb, Music, Fingerprint,
   RotateCcw, BookOpen, Calendar, User, TreePine, Star, ChevronDown
 } from 'lucide-react';
 import './About.css';
 
 const features = [
   { icon: <Lightbulb size={20} />, title: 'Adaptive Lighting', desc: 'RGB LED lights with basic white, custom color, sound-reactive, and ambient-adaptive modes.' },
-  { icon: <Droplets size={20} />, title: 'Dual Water Fountain', desc: 'Main and auxiliary spouts with adjustable strength. Force sensor support for pressure-reactive control.' },
+  { icon: <Droplets size={20} />, title: 'Three-Pump Water System', desc: 'The first two pumps retain their fountain functions; a third suction pump is intended to drain water from the tank. The drainage pump hardware pin is pending configuration.' },
   { icon: <RotateCcw size={20} />, title: 'Rotating Inner Plaza', desc: 'The central colonnade plaza can rotate continuously, on demand, or only when the mic detects sound.' },
   { icon: <Music size={20} />, title: 'Ambient Audio', desc: 'Pre-recorded soundscapes play directly into the diorama, bringing the miniature world to life.' },
-  { icon: <KeyRound size={20} />, title: 'RFID Gate Access', desc: 'The front gate opens and closes via RFID reader, simulating real park entry control.' },
+  { icon: <Fingerprint size={20} />, title: 'Biometric Sensor Access', desc: 'A registered fingerprint on the biometric sensor is required to unlock the gate and access and interact with the diorama features.' },
   { icon: <Cpu size={20} />, title: 'ESP32 Sensor Hub', desc: 'Powered by an ESP32 microcontroller integrating RGB, electret mic, ambient light, color, and force sensors.' }
 ];
 
@@ -23,7 +23,7 @@ const historyTimeline = [
 ];
 
 /* ── Accordion wrapper ─────────────────────────────────────── */
-function Accordion({ id, icon, title, subtitle, defaultOpen = false, children }) {
+function Accordion({ icon, title, subtitle, defaultOpen = false, children }) {
   const [open, setOpen] = useState(defaultOpen);
   return (
     <div className={`accordion-card ${open ? 'accordion-open' : ''}`}>

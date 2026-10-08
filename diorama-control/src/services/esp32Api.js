@@ -57,6 +57,12 @@ export const sendFountainControl = (isOn, leftStrength = 100, rightStrength = 75
   });
 };
 
+export const sendDrainagePumpControl = (isOn) => {
+  return sendEspCommand('/api/drainage-pump', {
+    state: isOn ? 'on' : 'off'
+  });
+};
+
 export const sendColorControl = (hexColor, target = 'left') => {
   // Convert hex #RRGGBB to R, G, B ints
   const cleanHex = hexColor.replace('#', '');

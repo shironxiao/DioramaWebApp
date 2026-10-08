@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Cpu, Sun, Mic, Fingerprint, RefreshCw, Plus, Trash2, Search, Radio } from 'lucide-react';
+import { Cpu, Sun, Mic, Fingerprint, RefreshCw, Plus, Trash2, Search, Radio, Droplets } from 'lucide-react';
 import { getLiveSensors, getFingerprintUsers, deleteFingerprintUser } from '../../services/esp32Api';
 import './Settings.css';
 
@@ -90,7 +90,7 @@ const parseSensorList = (payload) => {
     });
 };
 
-export default function SettingsPage({ showToast, onOpenRegister }) {
+export default function SettingsPage({ appState, setAppState, showToast, onOpenRegister }) {
   const [sensors, setSensors] = useState([]);
   const [sensorLoadError, setSensorLoadError] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -238,6 +238,38 @@ export default function SettingsPage({ showToast, onOpenRegister }) {
           <p className="card-description-subtext mt-3">
             Hardware status indicators showing sensor connectivity and readiness for diorama automation.
           </p>
+        </div>
+      </div>
+
+      {/* Drainage pump control */}
+      <div className="settings-single-grid mt-4">
+        <div className="control-card">
+          <div className="card-header">
+            <div className="card-title-group">
+              <div className="icon-badge sage">
+                <Droplets size={22} />
+              </div>
+              <div>
+                <h3 className="card-title">Water Drainage Pump</h3>
+                <p className="card-subtitle">Third pump · suction/drainage</p>
+              </div>
+            </div>
+            <button
+              type="button"
+              className={`drainage-pump-toggle ${appState.drainagePumpOn ? 'is-on' : ''}`}
+              aria-pressed={appState.drainagePumpOn}
+              onClick={() => setAppState({ drainagePumpOn: !appState.drainagePumpOn })}
+            >
+              {appState.drainagePumpOn ? 'Turn OFF' : 'Turn ON'}
+            </button>
+          </div>
+          <p className="card-description-subtext">
+            This pump is intended to suck water out of the tank. Its ON/OFF request is shown here, but the
+            physical output is not active until the pump GPIO pin and wiring are provided and configured.
+          </p>
+          <div className={`drainage-pump-status ${appState.drainagePumpOn ? 'is-on' : ''}`} role="status">
+            Drainage pump request: {appState.drainagePumpOn ? 'ON' : 'OFF'} · hardware pin pending
+          </div>
         </div>
       </div>
 

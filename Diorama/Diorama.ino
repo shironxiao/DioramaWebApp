@@ -22,9 +22,10 @@
 
   ── HTTP API (same endpoints as Web App) ────────────────────────────────────
   GET /api/light?state=on|off&brightness=0-100
-  GET /api/mode?mode=Basic|Colorful|Sound+Reactive|Color+Adaptive
+  GET /api/mode?mode=Basic|Colorful|Custom+Color|Sound+Reactive|Color+Adaptive
   GET /api/color?r=0-255&g=0-255&b=0-255&target=left|right|center|all
   GET /api/fountain?state=on|off&strength=0-100&auxStrength=0-100
+  GET /api/drainage-pump?state=on|off
   GET /api/gate?state=open|closed
   GET /api/gate/status                          → {"open":true|false}
   GET /api/audio/play?file=xxx.mp3
@@ -85,7 +86,6 @@ struct FingerprintUser {
 #include "Audio.h"
 #include <WiFi.h>
 #include <WebServer.h>
-#include <HTTPClient.h>
 #include <ArduinoJson.h>
 #include <Wire.h>
 #include <driver/gpio.h>
@@ -103,7 +103,6 @@ struct FingerprintUser {
 // shown on the TFT to configure the web app's Settings page.
 #define WIFI_AP_SSID  "Diorama-Park"
 #define WIFI_AP_PASS  "diorama123"   // min 8 chars; set "" for open network
-#define SLAVE_ESP32_IP "192.168.4.200"
 
 // ── Pins ─────────────────────────────────────────────────────────────────────
 #define SD_SCK    14
@@ -206,7 +205,7 @@ RGB hsv(int h, int s, int v) {
 }
 uint16_t c565(RGB c) { return tft.color565(c.r, c.g, c.b); }
 
-// Preset palette (12 swatches on Colorful mode)
+// Preset palette (12 swatches for Custom Color mode)
 const RGB PAL[12] = {
   {255, 68, 68},{255,140,  0},{255,215,  0},{124,252,  0},
   {  0,191,255},{138, 43,226},{255,105,180},{255,255,255},
@@ -217,12 +216,12 @@ const RGB PAL[12] = {
 // Lights
 bool    lightsOn    = false;   // start OFF until gate opens
 int     brightness  = 75;      // 0-100
-String  lightMode   = "Basic"; // Basic | Colorful | Sound Reactive | Color Adaptive
+String  lightMode   = "Basic"; // Colorful is the internal ID for the Custom Color mode.
 bool    soundReactive = false;
 
 // Color zones (left, right, center)  — index 0=left 1=right 2=center
 RGB     zone[3]     = { {255,255,255}, {255,255,255}, {255,255,255} };
-// Working colour for Colorful mode picker
+// Working colour for the Custom Color mode picker
 int     hue = 36, sat = 46;
 RGB     cur = {255, 255, 255};
 int     lastApplied = -1; // 0=ALL 1=Left 2=Right 3=Center
@@ -231,6 +230,7 @@ int     lastApplied = -1; // 0=ALL 1=Left 2=Right 3=Center
 bool    fountainOn  = false;
 int     fountainStr = 100;  // 0-100
 int     fountainAux = 75;   // 0-100
+bool    drainagePumpOn = false; // Software state only until a hardware pin is assigned.
 
 // Gate
 bool    gateOpen    = false;
@@ -387,13 +387,13 @@ void updateColorSensorScanForMode() {
       colorSensorReceiveSeen = false;
       detectedColor = {255, 255, 255};
       colorSensorLastPacketMs = millis();
-      Serial.println("[COLOR UART] Scan started automatically in Colorful mode");
+      Serial.println("[COLOR UART] Scan started automatically in Custom Color mode");
     }
   } else if (colorSensorScanning) {
     colorSensorScanning = false;
     colorSensorAvailable = false;
     detectedColor = {255, 255, 255};
-    Serial.println("[COLOR UART] Scan stopped outside Colorful mode");
+    Serial.println("[COLOR UART] Scan stopped outside Custom Color mode");
   }
 }
 
@@ -633,9 +633,9 @@ void card(int x, int y, int w, int h, uint16_t fill, uint16_t border) {
 
 // Labelled button (filled when active)
 void btn(int x, int y, int w, int h, const char* label, bool active,
-         uint16_t accent) {
+         uint16_t accent, uint8_t font = 2) {
   card(x, y, w, h, active ? accent : C_CARD, active ? accent : C_BORDER);
-  txt(label, x + w / 2, y + h / 2, 2,
+  txt(label, x + w / 2, y + h / 2, font,
       active ? C_WHITE : C_TEXT,
       active ? accent  : C_CARD,
       MC_DATUM);
@@ -1171,9 +1171,9 @@ void pollGate() {
 //
 //  Layout (480×284 body, y origin = HDR_H=36):
 //
-//  y  36..76  : Mode tabs  [ Basic ][ Colorful ][ Sound ][ Adaptive ]  (4 tabs)
+//  y  36..76  : Mode tabs  [ Basic ][ Custom Color ][ Sound ][ Adaptive ]  (4 tabs)
 //  y  80..132 : Power card (on/off toggle + current mode label)
-//  y 136..196 : Brightness slider (Basic/Colorful) or read-only indicator (Adaptive)
+//  y 136..196 : Brightness slider (Basic/Custom Color) or read-only indicator (Adaptive)
 //  Sound mode hides the brightness row and uses the freed space for sound controls.
 //
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1181,12 +1181,12 @@ void pollGate() {
 // Mode tabs — 4 tabs, each 116px wide with 3px gap, starting x=4
 // 4×116 + 3×3 = 473px — fits in 480
 void drawModeTabs() {
-  const char* labels[4] = { "Basic", "Colorful", "Sound", "Adaptive" };
+  const char* labels[4] = { "Basic", "Custom Color", "Sound", "Adaptive" };
   const Mode  modes[4]  = { M_BASIC, M_COLOR, M_SOUND, M_ADAPT };
   for (int i = 0; i < 4; i++) {
     bool act = (tftMode == modes[i]);
     int  bx  = 4 + i * 119;
-    btn(bx, BODY_Y + 2, 116, 36, labels[i], act, C_AMBER);
+    btn(bx, BODY_Y + 2, 116, 36, labels[i], act, C_AMBER, i == 1 ? 1 : 2);
     drawFocusCue(bx, BODY_Y + 2, 116, 36, i + 1, act);
     drawEncoderFocusCue(bx, BODY_Y + 2, 116, 36,
                         encoderControl == ENC_CONTROL_LIGHT_MODE && act);
@@ -1204,7 +1204,8 @@ void drawPowerCard() {
 
   txt(lightsOn ? "Lights  ON" : "Lights  OFF",
       60, cy + 10, 4, C_TEXT, C_CARD, TL_DATUM);
-  txt(lightMode.c_str(), 60, cy + 30, 2, C_DIM, C_CARD, TL_DATUM);
+  const char* modeLabel = tftMode == M_COLOR ? "Custom Color" : lightMode.c_str();
+  txt(modeLabel, 60, cy + 30, 2, C_DIM, C_CARD, TL_DATUM);
 
   toggleSw(410, cy + 13, lightsOn, C_AMBER);
   drawFocusCue(10, cy, 460, 48, 5, false);
@@ -1228,7 +1229,7 @@ void drawBrightnessRow() {
   }
 }
 
-// ── Colorful panel ────────────────────────────────────────────────────────────
+// ── Custom Color panel ────────────────────────────────────────────────────────
 //
 //  py+0   : "Color:" swatch and hex, plus live ambient lux
 //  py+20  : Hue gradient slider
@@ -1254,7 +1255,7 @@ void drawColorPanel() {
   } else if (colorSensorScanning) {
     strlcpy(sensorLabel, "Waiting for color...", sizeof(sensorLabel));
   } else {
-    strlcpy(sensorLabel, "Select Colorful mode", sizeof(sensorLabel));
+    strlcpy(sensorLabel, "Select Custom Color mode", sizeof(sensorLabel));
   }
   const uint16_t sensorLabelColor = colorSensorAvailable ? C_GREEN
                                       : colorSensorScanning ? C_AMBER : C_DIM;
@@ -2274,7 +2275,7 @@ void onPress(int x, int y) {
       return;
     }
 
-    // Brightness is adjustable only in Basic and Colorful modes.
+    // Brightness is adjustable only in Basic and Custom Color modes.
     if (tftMode != M_SOUND && tftMode != M_ADAPT &&
         inRect(x, y, SL_X0, BODY_Y + 116, SL_X1 - SL_X0, 52)) {
       selectEncoderControl(ENC_CONTROL_BRIGHTNESS);
@@ -2282,7 +2283,7 @@ void onPress(int x, int y) {
       dragging = D_BR; onDrag(x); return;
     }
 
-    // ── Colorful mode touch zones ─────────────────────────────────────────
+    // ── Custom Color mode touch zones ─────────────────────────────────────
     if (tftMode == M_COLOR) {
       int py = BODY_Y + 170;
 
@@ -2507,11 +2508,12 @@ void handleLight() {
   jsonOk();
 }
 
-// ── GET /api/mode?mode=Basic|Sound+Reactive|Color+Adaptive|Colorful ──────────
+// ── GET /api/mode?mode=Basic|Sound+Reactive|Color+Adaptive|Colorful|Custom+Color
 void handleMode() {
   if (server.hasArg("mode")) {
     lightMode = server.arg("mode");
     lightMode.replace("+", " ");  // URL-encoded spaces
+    if (lightMode == "Custom Color") lightMode = "Colorful";
     Serial.printf("[HTTP /api/mode] mode=%s\n", lightMode.c_str());
     // Sync TFT mode tab
     if (lightMode == "Basic")                tftMode = M_BASIC;
@@ -2558,6 +2560,27 @@ void handleFountain() {
   // Fountain GPIO — shared with SD MISO; only enable if SD is not active
   // analogWrite(FOUNTAIN_PIN, fountainOn ? map(fountainStr, 0, 100, 0, 255) : 0);
   jsonOk();
+}
+
+// ── GET /api/drainage-pump?state=on|off ──────────────────────────────────────
+// The GPIO is intentionally not configured until the user supplies the pump pin.
+void handleDrainagePump() {
+  if (!server.hasArg("state") ||
+      (server.arg("state") != "on" && server.arg("state") != "off")) {
+    server.send(400, "application/json",
+                "{\"error\":\"missing or invalid state; use state=on or state=off\"}");
+    return;
+  }
+
+  drainagePumpOn = server.arg("state") == "on";
+  Serial.printf("[DRAINAGE PUMP] Requested %s; output not energized because no GPIO pin is configured\n",
+                drainagePumpOn ? "ON" : "OFF");
+
+  char response[128];
+  snprintf(response, sizeof(response),
+           "{\"ok\":true,\"requested\":%s,\"hardwareConfigured\":false}",
+           drainagePumpOn ? "true" : "false");
+  server.send(200, "application/json", response);
 }
 
 // ── GET /api/gate?state=open|closed ─────────────────────────────────────────
@@ -2728,6 +2751,7 @@ void handleState() {
     "\"fountainOn\":%s,"
     "\"fountainStr\":%d,"
     "\"fountainAux\":%d,"
+    "\"drainagePumpOn\":%s,"
     "\"volume\":%d,"
     "\"audioPlaying\":%s,"
     "\"audioTrack\":\"%s\","
@@ -2744,6 +2768,7 @@ void handleState() {
     fountainOn     ? "true" : "false",
     fountainStr,
     fountainAux,
+    drainagePumpOn ? "true" : "false",
     volume,
     audioPlaying   ? "true" : "false",
     trackName,
@@ -2917,45 +2942,6 @@ void handleFingerprintDelete() {
   }
 }
 
-// ── GET /api/slave/command?value=LED_ON|LED_OFF|PING ──────────────────────────
-void handleSlaveCommand() {
-  if (!server.hasArg("value")) {
-    server.send(400, "application/json", "{\"error\":\"missing value parameter; use LED_ON, LED_OFF, or PING\"}");
-    return;
-  }
-
-  const String command = server.arg("value");
-  if (command != "LED_ON" && command != "LED_OFF" && command != "PING") {
-    server.send(400, "application/json", "{\"error\":\"unsupported command; use LED_ON, LED_OFF, or PING\"}");
-    return;
-  }
-
-  WiFiClient client;
-  HTTPClient http;
-  const String url = String("http://") + SLAVE_ESP32_IP + "/command?value=" + command;
-  http.setTimeout(2000);
-  if (!http.begin(client, url)) {
-    Serial.println("[SLAVE] Failed to start HTTP request");
-    server.send(502, "application/json", "{\"error\":\"could not start request to slave ESP32\"}");
-    return;
-  }
-
-  const int statusCode = http.GET();
-  const String response = statusCode > 0 ? http.getString() : String();
-  http.end();
-
-  if (statusCode <= 0) {
-    Serial.printf("[SLAVE] Command %s failed: %s\n",
-                  command.c_str(), HTTPClient::errorToString(statusCode).c_str());
-    server.send(502, "application/json", "{\"error\":\"slave ESP32 did not respond; check power, Wi-Fi, and IP address\"}");
-    return;
-  }
-
-  Serial.printf("[SLAVE] Command %s returned HTTP %d: %s\n",
-                command.c_str(), statusCode, response.c_str());
-  server.send(statusCode, "application/json", response);
-}
-
 // ── CORS preflight (OPTIONS) ──────────────────────────────────────────────────
 void handleOptions() {
   server.sendHeader("Access-Control-Allow-Origin", "*");
@@ -2977,6 +2963,7 @@ void setupRoutes() {
   server.on("/api/mode",             HTTP_OPTIONS, handleOptions);
   server.on("/api/color",            HTTP_OPTIONS, handleOptions);
   server.on("/api/fountain",         HTTP_OPTIONS, handleOptions);
+  server.on("/api/drainage-pump",   HTTP_OPTIONS, handleOptions);
   server.on("/api/gate",             HTTP_OPTIONS, handleOptions);
   server.on("/api/gate/status",      HTTP_OPTIONS, handleOptions);
   server.on("/api/audio/play",       HTTP_OPTIONS, handleOptions);
@@ -2991,13 +2978,13 @@ void setupRoutes() {
   server.on("/api/fingerprint/users",   HTTP_OPTIONS, handleOptions);
   server.on("/api/fingerprint/enroll",  HTTP_OPTIONS, handleOptions);
   server.on("/api/fingerprint/delete",  HTTP_OPTIONS, handleOptions);
-  server.on("/api/slave/command",       HTTP_OPTIONS, handleOptions);
 
   // GET handlers (wrap with CORS header injection)
   server.on("/api/light",  HTTP_GET, []() { addCORSHeaders(); handleLight();        });
   server.on("/api/mode",   HTTP_GET, []() { addCORSHeaders(); handleMode();         });
   server.on("/api/color",  HTTP_GET, []() { addCORSHeaders(); handleColor();        });
   server.on("/api/fountain",HTTP_GET,[]() { addCORSHeaders(); handleFountain();     });
+  server.on("/api/drainage-pump",HTTP_GET,[]() { addCORSHeaders(); handleDrainagePump(); });
   server.on("/api/gate",   HTTP_GET, []() { addCORSHeaders(); handleGate();         });
   server.on("/api/gate/status", HTTP_GET, []() { addCORSHeaders(); handleGateStatus(); });
   server.on("/api/audio/play",  HTTP_GET, []() { addCORSHeaders(); handleAudioPlay();  });
@@ -3014,7 +3001,6 @@ void setupRoutes() {
   server.on("/api/fingerprint/users",  HTTP_GET, []() { addCORSHeaders(); handleFingerprintUsers(); });
   server.on("/api/fingerprint/enroll", HTTP_GET, []() { addCORSHeaders(); handleFingerprintEnroll(); });
   server.on("/api/fingerprint/delete", HTTP_GET, []() { addCORSHeaders(); handleFingerprintDelete(); });
-  server.on("/api/slave/command",      HTTP_GET, []() { addCORSHeaders(); handleSlaveCommand(); });
 
   // ── Static Web App Files (SPIFFS) ──────────────────────────────────────────
   server.serveStatic("/", SPIFFS, "/");

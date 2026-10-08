@@ -11,6 +11,7 @@ import FingerprintRegisterModal from './components/FingerprintRegisterModal';
 import {
   sendLightControl,
   sendFountainControl,
+  sendDrainagePumpControl,
   sendColorControl,
   sendGateControl,
   sendModeControl,
@@ -54,6 +55,7 @@ function App() {
     fountainStrength: 100,
     fountainAuxStrength: 75,
     fountainForceSensorOn: false,
+    drainagePumpOn: false,
 
     fountainColor: '#77898D',
     fountainAuxColor: '#3B9DB3',
@@ -137,6 +139,7 @@ function App() {
         set('fountainOn',       s.fountainOn);
         set('fountainStrength', s.fountainStr);
         set('fountainAuxStrength', s.fountainAux);
+        set('drainagePumpOn',   s.drainagePumpOn);
         set('volume',           s.volume);
         set('audioPlaying',     s.audioPlaying);
         set('fountainColor',    s.fountainColor);
@@ -177,6 +180,9 @@ function App() {
         next.fountainAuxStrength !== prev.fountainAuxStrength
       ) {
         sendFountainControl(next.fountainOn, next.fountainStrength, next.fountainAuxStrength);
+      }
+      if (next.drainagePumpOn !== prev.drainagePumpOn) {
+        sendDrainagePumpControl(next.drainagePumpOn);
       }
       if (next.fountainColor !== prev.fountainColor) {
         sendColorControl(next.fountainColor, 'left');
