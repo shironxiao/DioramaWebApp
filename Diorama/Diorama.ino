@@ -85,6 +85,7 @@ struct FingerprintUser {
 #include "Audio.h"
 #include <WiFi.h>
 #include <WebServer.h>
+#include <HTTPClient.h>
 #include <ArduinoJson.h>
 #include <Wire.h>
 #include <driver/gpio.h>
@@ -102,6 +103,7 @@ struct FingerprintUser {
 // shown on the TFT to configure the web app's Settings page.
 #define WIFI_AP_SSID  "Diorama-Park"
 #define WIFI_AP_PASS  "diorama123"   // min 8 chars; set "" for open network
+#define SLAVE_ESP32_IP "192.168.4.200"
 
 // ── Pins ─────────────────────────────────────────────────────────────────────
 #define SD_SCK    14
@@ -2915,6 +2917,45 @@ void handleFingerprintDelete() {
   }
 }
 
+// ── GET /api/slave/command?value=LED_ON|LED_OFF|PING ──────────────────────────
+void handleSlaveCommand() {
+  if (!server.hasArg("value")) {
+    server.send(400, "application/json", "{\"error\":\"missing value parameter; use LED_ON, LED_OFF, or PING\"}");
+    return;
+  }
+
+  const String command = server.arg("value");
+  if (command != "LED_ON" && command != "LED_OFF" && command != "PING") {
+    server.send(400, "application/json", "{\"error\":\"unsupported command; use LED_ON, LED_OFF, or PING\"}");
+    return;
+  }
+
+  WiFiClient client;
+  HTTPClient http;
+  const String url = String("http://") + SLAVE_ESP32_IP + "/command?value=" + command;
+  http.setTimeout(2000);
+  if (!http.begin(client, url)) {
+    Serial.println("[SLAVE] Failed to start HTTP request");
+    server.send(502, "application/json", "{\"error\":\"could not start request to slave ESP32\"}");
+    return;
+  }
+
+  const int statusCode = http.GET();
+  const String response = statusCode > 0 ? http.getString() : String();
+  http.end();
+
+  if (statusCode <= 0) {
+    Serial.printf("[SLAVE] Command %s failed: %s\n",
+                  command.c_str(), HTTPClient::errorToString(statusCode).c_str());
+    server.send(502, "application/json", "{\"error\":\"slave ESP32 did not respond; check power, Wi-Fi, and IP address\"}");
+    return;
+  }
+
+  Serial.printf("[SLAVE] Command %s returned HTTP %d: %s\n",
+                command.c_str(), statusCode, response.c_str());
+  server.send(statusCode, "application/json", response);
+}
+
 // ── CORS preflight (OPTIONS) ──────────────────────────────────────────────────
 void handleOptions() {
   server.sendHeader("Access-Control-Allow-Origin", "*");
@@ -2950,6 +2991,7 @@ void setupRoutes() {
   server.on("/api/fingerprint/users",   HTTP_OPTIONS, handleOptions);
   server.on("/api/fingerprint/enroll",  HTTP_OPTIONS, handleOptions);
   server.on("/api/fingerprint/delete",  HTTP_OPTIONS, handleOptions);
+  server.on("/api/slave/command",       HTTP_OPTIONS, handleOptions);
 
   // GET handlers (wrap with CORS header injection)
   server.on("/api/light",  HTTP_GET, []() { addCORSHeaders(); handleLight();        });
@@ -2972,6 +3014,7 @@ void setupRoutes() {
   server.on("/api/fingerprint/users",  HTTP_GET, []() { addCORSHeaders(); handleFingerprintUsers(); });
   server.on("/api/fingerprint/enroll", HTTP_GET, []() { addCORSHeaders(); handleFingerprintEnroll(); });
   server.on("/api/fingerprint/delete", HTTP_GET, []() { addCORSHeaders(); handleFingerprintDelete(); });
+  server.on("/api/slave/command",      HTTP_GET, []() { addCORSHeaders(); handleSlaveCommand(); });
 
   // ── Static Web App Files (SPIFFS) ──────────────────────────────────────────
   server.serveStatic("/", SPIFFS, "/");
