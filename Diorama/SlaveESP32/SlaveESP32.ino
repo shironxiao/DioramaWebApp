@@ -33,10 +33,8 @@ void handleCommand() {
 
   const String command = server.arg("value");
   if (command == "LED_ON") {
-    digitalWrite(LED_BUILTIN, HIGH);
     ledIsOn = true;
   } else if (command == "LED_OFF") {
-    digitalWrite(LED_BUILTIN, LOW);
     ledIsOn = false;
   } else if (command != "PING") {
     server.send(400, "application/json", "{\"error\":\"unknown command; use LED_ON, LED_OFF, or PING\"}");
@@ -55,8 +53,6 @@ void handleCommand() {
 void setup() {
   Serial.begin(115200);
   delay(500);
-  pinMode(LED_BUILTIN, OUTPUT);
-  digitalWrite(LED_BUILTIN, LOW);
 
   Serial.println();
   Serial.println("NodeMCU-32S slave ESP32 starting");
@@ -92,6 +88,7 @@ void loop() {
       Serial.println("[WiFi] Connected to main ESP32 access point");
       Serial.print("[WiFi] Slave IP: ");
       Serial.println(WiFi.localIP());
+      Serial.println("[COMMAND] Main ESP32 can now send commands");
       Serial.print("[WiFi] Main ESP32 IP: ");
       Serial.println(WiFi.gatewayIP());
       Serial.print("[WiFi] Signal strength: ");
