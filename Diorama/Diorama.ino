@@ -11,7 +11,7 @@
   Note         : Leave ILI9488 SDO disconnected; only XPT2046 T_DO connects to GPIO 19.
   Rotary      : CLK 25, DT 26, SW 27
   SD/I2S      : Temporarily disabled; GPIO 25-27 are reserved for the encoder.
-  Mic         : GPIO 34  (ADC1 analog)
+  Mic         : GPIO 35  (ADC1 input-only analog; SD is disabled)
   RGB LEDs    : red disabled (GPIO 4 is TFT reset), G=5, B=12
   Shared I2C bus: ESP32 SDA=32, SCL=33 -> VEML7700 and PCA9685 SDA/SCL
   Color controller UART1: Nano TX -> GPIO 36, ESP32 TX GPIO 22 -> Nano RX, 9600 baud
@@ -87,6 +87,7 @@ struct FingerprintUser {
 #include <WebServer.h>
 #include <ArduinoJson.h>
 #include <Wire.h>
+#include <driver/gpio.h>
 #include <Adafruit_Fingerprint.h>
 #include "webapp_embed.h"
 
@@ -104,13 +105,13 @@ struct FingerprintUser {
 
 // ── Pins ─────────────────────────────────────────────────────────────────────
 #define SD_SCK    14
-#define SD_MISO   35
+#define SD_MISO   35  // Conflicts with MIC_PIN; reassign before enabling SD/audio.
 #define SD_MOSI  25  // Unused while SD_AUDIO_ENABLED is false; reassign before enabling.
 #define SD_CS     13
 #define I2S_BCLK  26  // Unused while SD_AUDIO_ENABLED is false; reassign before enabling.
 #define I2S_LRC   27  // Unused while SD_AUDIO_ENABLED is false; reassign before enabling.
-#define I2S_DOUT  22  // Also used by color UART ACK; reassign before enabling audio.
-#define MIC_PIN   34
+#define I2S_DOUT  22  // Audio is disabled; color UART is receive-only.
+#define MIC_PIN   35
 #define ENCODER_CLK_PIN 25
 #define ENCODER_DT_PIN  26
 #define ENCODER_SW_PIN  27
@@ -122,7 +123,7 @@ constexpr bool SD_AUDIO_ENABLED = false;
 #define I2C_SDA_PIN 32  // Shared by the ambient sensor and PWM extender
 #define I2C_SCL_PIN 33
 #define COLOR_SENSOR_RX_PIN 36
-#define COLOR_SENSOR_TX_PIN 22
+#define COLOR_SENSOR_TX_PIN -1
 #define COLOR_SENSOR_BAUD   9600
 #define COLOR_SENSOR_TIMEOUT_MS 5000
 #define FOUNTAIN_PIN 2
@@ -216,7 +217,6 @@ bool    lightsOn    = false;   // start OFF until gate opens
 int     brightness  = 75;      // 0-100
 String  lightMode   = "Basic"; // Basic | Colorful | Sound Reactive | Color Adaptive
 bool    soundReactive = false;
-int     soundIntensity = 65;   // 0-100
 
 // Color zones (left, right, center)  — index 0=left 1=right 2=center
 RGB     zone[3]     = { {255,255,255}, {255,255,255}, {255,255,255} };
@@ -252,8 +252,8 @@ Drag  dragging  = D_NONE;
 EncoderMode encoderMode = ENC_NAVIGATE;
 EncoderControl encoderControl = ENC_CONTROL_BRIGHTNESS;
 uint8_t encoderControlIndex = 0;
-uint8_t encoderPreviousState = 0;
-int8_t encoderQuarterSteps = 0;
+volatile uint8_t encoderPreviousState = 0;
+volatile int16_t encoderQuarterSteps = 0;
 bool encoderButtonStableHigh = true;
 bool encoderButtonCandidateHigh = true;
 uint32_t encoderButtonChangeMs = 0;
@@ -277,6 +277,7 @@ uint32_t micLastLogMs = 0;
 
 bool ambientSensorAvailable = false;
 bool colorSensorAvailable = false;
+bool colorSensorScanning = false;
 bool colorSensorReceiveSeen = false;
 bool ambientSensorConfigured = false;
 float ambientLux = 0.0f;
@@ -303,6 +304,7 @@ void applyEncoderStep(int direction);
 void syncEncoderControlIndex();
 void applyColorZone(uint8_t zoneIndex);
 void selectEncoderControl(EncoderControl control);
+void IRAM_ATTR encoderQuadratureISR();
 void startEnrollment();
 bool deleteUser(int fpID);
 void togglePlay();
@@ -375,6 +377,45 @@ bool parseColorSensorPacket(const char* packet, RGB* color) {
   return true;
 }
 
+void updateColorSensorScanForMode() {
+  if (lightMode == "Colorful") {
+    if (!colorSensorScanning) {
+      colorSensorScanning = true;
+      colorSensorAvailable = false;
+      colorSensorReceiveSeen = false;
+      detectedColor = {255, 255, 255};
+      colorSensorLastPacketMs = millis();
+      Serial.println("[COLOR UART] Scan started automatically in Colorful mode");
+    }
+  } else if (colorSensorScanning) {
+    colorSensorScanning = false;
+    colorSensorAvailable = false;
+    detectedColor = {255, 255, 255};
+    Serial.println("[COLOR UART] Scan stopped outside Colorful mode");
+  }
+}
+
+void processColorSensorColor(const RGB& received) {
+  if (!colorSensorScanning) return;
+
+  detectedColor = received;
+  colorSensorAvailable = true;
+  colorSensorLastPacketMs = millis();
+
+  static uint32_t validPacketLogMs = 0;
+  if (colorSensorLastPacketMs - validPacketLogMs >= 1000) {
+    validPacketLogMs = colorSensorLastPacketMs;
+    Serial.printf("[COLOR UART] RGB=%u,%u,%u\n",
+                  detectedColor.r, detectedColor.g, detectedColor.b);
+  }
+
+  cur = detectedColor;
+  zone[0] = zone[1] = zone[2] = detectedColor;
+  lastApplied = 0;
+  pushZones();
+  if (page == P_LIGHTS && tftMode == M_COLOR) drawColorPanel();
+}
+
 void processColorSensorPacket(const char* packet) {
   RGB received;
   if (!parseColorSensorPacket(packet, &received)) {
@@ -388,41 +429,52 @@ void processColorSensorPacket(const char* packet) {
     return;
   }
 
-  detectedColor = received;
-  colorSensorAvailable = true;
-  colorSensorLastPacketMs = millis();
-  colorSensorSerial.print(F("ACK,"));
-  colorSensorSerial.print(detectedColor.r);
-  colorSensorSerial.print(',');
-  colorSensorSerial.print(detectedColor.g);
-  colorSensorSerial.print(',');
-  colorSensorSerial.println(detectedColor.b);
-
-  static uint32_t validPacketLogMs = 0;
-  if (colorSensorLastPacketMs - validPacketLogMs >= 1000) {
-    validPacketLogMs = colorSensorLastPacketMs;
-    Serial.printf("[COLOR UART] RGB=%u,%u,%u\n",
-                  detectedColor.r, detectedColor.g, detectedColor.b);
-  }
-
-  if (lightMode == "Colorful") {
-    cur = detectedColor;
-    if (page == P_LIGHTS && tftMode == M_COLOR) drawColorPanel();
-  }
+  processColorSensorColor(received);
 }
 
 void updateColorSensor() {
   static char packet[128];
   static size_t packetLength = 0;
   static bool discardingLongPacket = false;
+  // Some Nano sketches send text lines; others write three raw RGB bytes.
+  static bool binaryMode = false;
+  static uint8_t binaryColor[3];
+  static size_t binaryColorLength = 0;
   static uint32_t noDataLogMs = 0;
   static uint32_t packetLastByteMs = 0;
-  static uint32_t incompleteLineLogMs = 0;
+  static bool firstByteLogged = false;
 
   while (colorSensorSerial.available()) {
     const char value = (char)colorSensorSerial.read();
     colorSensorReceiveSeen = true;
-    packetLastByteMs = millis();
+    if (!firstByteLogged) {
+      firstByteLogged = true;
+      Serial.printf("[COLOR UART] First byte received on GPIO%d: 0x%02X '%c'\n",
+                    COLOR_SENSOR_RX_PIN, (uint8_t)value,
+                    ((uint8_t)value >= 0x20 && (uint8_t)value <= 0x7E) ? value : '.');
+    }
+    const uint32_t byteMs = millis();
+    if (binaryMode && byteMs - packetLastByteMs > 1000) {
+      if (binaryColorLength > 0) {
+        Serial.println("[COLOR UART] Dropped incomplete binary RGB packet");
+      }
+      binaryMode = false;
+      binaryColorLength = 0;
+    }
+    packetLastByteMs = byteMs;
+
+    if (binaryMode) {
+      binaryColor[binaryColorLength++] = (uint8_t)value;
+      if (binaryColorLength == sizeof(binaryColor)) {
+        const RGB received = {
+          binaryColor[0], binaryColor[1], binaryColor[2]
+        };
+        processColorSensorColor(received);
+        binaryColorLength = 0;
+      }
+      continue;
+    }
+
     if (value == '\n' || value == '\r') {
       if (discardingLongPacket) {
         Serial.println("[COLOR UART] Discarded oversized line (limit 127 bytes)");
@@ -432,6 +484,12 @@ void updateColorSensor() {
       }
       packetLength = 0;
       discardingLongPacket = false;
+    } else if ((uint8_t)value < 0x20 || (uint8_t)value > 0x7E) {
+      packetLength = 0;
+      discardingLongPacket = false;
+      binaryMode = true;
+      binaryColor[0] = (uint8_t)value;
+      binaryColorLength = 1;
     } else {
       if (!discardingLongPacket) {
         if (packetLength < sizeof(packet) - 1) packet[packetLength++] = value;
@@ -449,24 +507,20 @@ void updateColorSensor() {
     Serial.printf("[COLOR UART] No bytes received on GPIO%d at %d baud; check Nano TX -> ESP32 RX, common GND, and level-shifter direction\n",
                   COLOR_SENSOR_RX_PIN, COLOR_SENSOR_BAUD);
   }
-  if (packetLength > 0 && now - packetLastByteMs >= 1000 &&
-      now - incompleteLineLogMs >= 5000) {
-    incompleteLineLogMs = now;
-    Serial.printf("[COLOR UART] Incomplete line (%u bytes); raw HEX:", (unsigned)packetLength);
-    const size_t bytesToLog = min(packetLength, (size_t)24);
-    for (size_t i = 0; i < bytesToLog; i++) {
-      Serial.printf(" %02X", (uint8_t)packet[i]);
-    }
-    if (packetLength > bytesToLog) Serial.print(" ...");
-    Serial.println();
+  if (!binaryMode && packetLength > 0 && now - packetLastByteMs >= 50) {
+    packet[packetLength] = '\0';
+    processColorSensorPacket(packet);
+    packetLength = 0;
+    discardingLongPacket = false;
   }
   if (colorSensorAvailable && now - colorSensorLastPacketMs > COLOR_SENSOR_TIMEOUT_MS) {
     colorSensorAvailable = false;
     Serial.println("[COLOR UART] Color data timed out");
+    if (page == P_LIGHTS && tftMode == M_COLOR) drawColorPanel();
   }
 }
 
-// Ambient sensing stays local on I2C; only Custom Color uses the UART controller.
+// Ambient sensing stays local on I2C; color UART packets are accepted during scans.
 constexpr uint8_t VEML7700_ADDR = 0x10;
 constexpr uint8_t VEML7700_ALS_CONF = 0x00;
 constexpr uint8_t VEML7700_ALS_DATA = 0x04;
@@ -1195,8 +1249,14 @@ void drawColorPanel() {
   if (colorSensorAvailable) {
     snprintf(sensorLabel, sizeof(sensorLabel), "Sensor #%02X%02X%02X",
              detectedColor.r, detectedColor.g, detectedColor.b);
-  } else strlcpy(sensorLabel, "Color sensor offline", sizeof(sensorLabel));
-  txt(sensorLabel, 460, py + 8, 2, colorSensorAvailable ? C_GREEN : C_RED, C_BG, TR_DATUM);
+  } else if (colorSensorScanning) {
+    strlcpy(sensorLabel, "Waiting for color...", sizeof(sensorLabel));
+  } else {
+    strlcpy(sensorLabel, "Select Colorful mode", sizeof(sensorLabel));
+  }
+  const uint16_t sensorLabelColor = colorSensorAvailable ? C_GREEN
+                                      : colorSensorScanning ? C_AMBER : C_DIM;
+  txt(sensorLabel, 460, py + 8, 2, sensorLabelColor, C_BG, TR_DATUM);
 
   // ── Hue gradient slider ───────────────────────────────────────────────────
   label("Hue", SL_X0, py + 22);
@@ -1604,6 +1664,39 @@ void setupEncoder() {
   encoderButtonStableHigh = digitalRead(ENCODER_SW_PIN) == HIGH;
   encoderButtonCandidateHigh = encoderButtonStableHigh;
   encoderButtonChangeMs = millis();
+  attachInterrupt(digitalPinToInterrupt(ENCODER_CLK_PIN), encoderQuadratureISR, CHANGE);
+  attachInterrupt(digitalPinToInterrupt(ENCODER_DT_PIN), encoderQuadratureISR, CHANGE);
+}
+
+void IRAM_ATTR encoderQuadratureISR() {
+  const uint8_t currentState =
+      (gpio_get_level((gpio_num_t)ENCODER_CLK_PIN) << 1) |
+      gpio_get_level((gpio_num_t)ENCODER_DT_PIN);
+  const uint8_t transition = (encoderPreviousState << 2) | currentState;
+  int8_t step = 0;
+
+  switch (transition) {
+    case 0b0001:
+    case 0b0111:
+    case 0b1110:
+    case 0b1000:
+      step = -1;
+      break;
+    case 0b0010:
+    case 0b0100:
+    case 0b1011:
+    case 0b1101:
+      step = 1;
+      break;
+    default:
+      break;
+  }
+
+  encoderPreviousState = currentState;
+  const int16_t nextSteps = encoderQuarterSteps + step;
+  if (nextSteps > 16) encoderQuarterSteps = 16;
+  else if (nextSteps < -16) encoderQuarterSteps = -16;
+  else encoderQuarterSteps = nextSteps;
 }
 
 void applyEncoderStep(int direction) {
@@ -1630,6 +1723,7 @@ void applyEncoderStep(int direction) {
       } else {
         lightMode = "Color Adaptive";
       }
+      updateColorSensorScanForMode();
       Serial.printf("[ENCODER] Lighting mode: %s\n", lightMode.c_str());
       drawLights();
       break;
@@ -1694,33 +1788,23 @@ void handleEncoderShortPress() {
 }
 
 void pollEncoder() {
-  static const int8_t transitions[16] = {
-     0, -1,  1,  0,
-     1,  0,  0, -1,
-    -1,  0,  0,  1,
-     0,  1, -1,  0
-  };
+  if (gateState == GS_OPEN && enrollState == ENROLL_IDLE) {
+    int8_t step = 0;
+    noInterrupts();
+    if (encoderQuarterSteps >= 4) {
+      encoderQuarterSteps -= 4;
+      step = 1;
+    } else if (encoderQuarterSteps <= -4) {
+      encoderQuarterSteps += 4;
+      step = -1;
+    }
+    interrupts();
 
-  const uint8_t currentState = (digitalRead(ENCODER_CLK_PIN) << 1) |
-                               digitalRead(ENCODER_DT_PIN);
-  const uint8_t transition = (encoderPreviousState << 2) | currentState;
-  if ((encoderPreviousState ^ currentState) == 0x03) {
-    encoderQuarterSteps = 0;
-  } else if (gateState == GS_OPEN && enrollState == ENROLL_IDLE) {
-    encoderQuarterSteps += transitions[transition];
+    if (step != 0) applyEncoderStep(step);
   } else {
+    noInterrupts();
     encoderQuarterSteps = 0;
-  }
-  encoderPreviousState = currentState;
-
-  if (gateState == GS_OPEN && enrollState == ENROLL_IDLE &&
-      encoderQuarterSteps >= 4) {
-    encoderQuarterSteps = 0;
-    applyEncoderStep(1);
-  } else if (gateState == GS_OPEN && enrollState == ENROLL_IDLE &&
-             encoderQuarterSteps <= -4) {
-    encoderQuarterSteps = 0;
-    applyEncoderStep(-1);
+    interrupts();
   }
 
   const uint32_t now = millis();
@@ -1935,7 +2019,8 @@ void updateMicSensor() {
 
   if (now - micLastLogMs >= 500) {
     micLastLogMs = now;
-    Serial.printf("[SOUND] GPIO34 min=%d max=%d p-p=%d rms=%d level=%d/1023 detected=%s threshold=%d\n",
+    Serial.printf("[SOUND] GPIO%d min=%d max=%d p-p=%d rms=%d level=%d/1023 detected=%s threshold=%d\n",
+                  MIC_PIN,
                   micRawMin, micRawMax, micPeakToPeak, micRms, micLevel,
                   micDetected ? "yes" : "no", detectionThreshold);
   }
@@ -2166,6 +2251,7 @@ void onPress(int x, int y) {
             if (tftMode == M_COLOR)  { lightMode = "Colorful"; }
             if (tftMode == M_SOUND)  { lightMode = "Sound Reactive"; }
             if (tftMode == M_ADAPT)  { lightMode = "Color Adaptive"; }
+            updateColorSensorScanForMode();
             Serial.printf("[MODE] %s\n", lightMode.c_str());
             drawLights();
           } else {
@@ -2431,6 +2517,8 @@ void handleMode() {
     else if (lightMode == "Sound Reactive")  tftMode = M_SOUND;
     else if (lightMode == "Color Adaptive")  tftMode = M_ADAPT;
     else                                     tftMode = M_BASIC;
+
+    updateColorSensorScanForMode();
     if (tftMode == M_BASIC) setAll({255, 255, 255});
     if (page == P_LIGHTS && gateState == GS_OPEN) drawLights();
   }
@@ -2585,12 +2673,13 @@ void handleAudioFiles() {
 // ── GET /api/sound-reactive?state=on|off&intensity=0-100 ─────────────────────
 void handleSoundReactive() {
   if (server.hasArg("state"))     soundReactive   = (server.arg("state") == "on");
-  if (server.hasArg("intensity")) soundIntensity  = constrain(server.arg("intensity").toInt(), 0, 100);
+  if (server.hasArg("intensity")) sens = constrain(server.arg("intensity").toInt(), 0, 100);
   Serial.printf("[HTTP /api/sound-reactive] state=%s intensity=%d\n",
-                soundReactive ? "on" : "off", soundIntensity);
+                soundReactive ? "on" : "off", sens);
   if (soundReactive) {
     lightMode = "Sound Reactive";
     tftMode   = M_SOUND;
+    updateColorSensorScanForMode();
     if (page == P_LIGHTS && gateState == GS_OPEN) drawLights();
   }
   jsonOk();
@@ -2649,7 +2738,7 @@ void handleState() {
     brightness,
     modeEsc,
     soundReactive  ? "true" : "false",
-    soundIntensity,
+    sens,
     fountainOn     ? "true" : "false",
     fountainStr,
     fountainAux,
@@ -2683,12 +2772,13 @@ void handleSensors() {
   snprintf(buf, sizeof(buf),
     "{"
     "\"ambientLight\":{\"connected\":%s,\"lux\":%s,\"brightness\":%d,\"source\":\"VEML7700 I2C\"},"
-    "\"colorSensor\":{\"connected\":%s,\"r\":%u,\"g\":%u,\"b\":%u,\"source\":\"Serial Color Sensor\"},"
+    "\"colorSensor\":{\"connected\":%s,\"scanning\":%s,\"r\":%u,\"g\":%u,\"b\":%u,\"source\":\"Serial Color Sensor\"},"
     "\"mic\":{\"level\":%d,\"percent\":%d,\"rms\":%d,\"peakToPeak\":%d,\"detected\":%s},"
     "\"biometric\":{\"state\":\"%s\",\"open\":%s,\"authorized\":%s}"
     "}",
     ambientSensorAvailable ? "true" : "false", luxJson, brightness,
     colorSensorAvailable ? "true" : "false",
+    colorSensorScanning ? "true" : "false",
     detectedColor.r, detectedColor.g, detectedColor.b,
     micLevel, micPct, micRms, micPeakToPeak, micDetected ? "true" : "false",
     gateStateStr,
@@ -3116,8 +3206,9 @@ void setup() {
                 ENCODER_CLK_PIN, ENCODER_DT_PIN, ENCODER_SW_PIN);
   colorSensorSerial.begin(COLOR_SENSOR_BAUD, SERIAL_8N1,
                           COLOR_SENSOR_RX_PIN, COLOR_SENSOR_TX_PIN);
-  Serial.printf("[COLOR UART] Listening RX=%d, ACK TX=%d at %d baud\n",
-                COLOR_SENSOR_RX_PIN, COLOR_SENSOR_TX_PIN, COLOR_SENSOR_BAUD);
+  Serial.printf("[COLOR UART] Listening RX=%d, TX disabled, at %d baud\n",
+                COLOR_SENSOR_RX_PIN, COLOR_SENSOR_BAUD);
+  Serial.println("[COLOR UART] Receive-only: accepts labeled/numeric RGB text or raw 3-byte RGB packets");
   setupAmbientSensor();
 
   pinMode(GREEN_PIN, OUTPUT);

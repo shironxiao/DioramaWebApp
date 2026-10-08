@@ -45,7 +45,7 @@ function App() {
     lightingMode: 'Basic',
     soundReactiveOn: false,
     micSensitivity: 50,
-    reactionIntensity: 65,
+    reactionIntensity: 60,
     autoDimming: false,
     ambientSensorOn: false,
     simulatedLight: 72,
@@ -340,4 +340,3 @@ function App() {
 }
 
 export default App;
-

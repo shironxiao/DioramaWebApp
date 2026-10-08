@@ -82,6 +82,7 @@
 #define PWM_FREQ_LED   5000  // 5 kHz for flicker-free LED dimming
 #define PWM_FREQ_MOTOR 1000  // 1 kHz for TB6612FNG motor control
 #define PWM_RESOLUTION 8     // 8-bit resolution (0 to 255)
+#define MAX_FOUNTAIN_PWM 215 // Keep pump PWM below the TB6612FNG test maximum
 
 // ─── HARDWARE STATE ────────────────────────────────────────────────────────────
 struct RGBColor {
@@ -96,9 +97,9 @@ bool     masterLightsOn = true;
 uint8_t  masterBrightness = 100; // 0-100%
 
 // Motor States
-int      motorSpeedA = 0;        // 0-255
+int      motorSpeedA = 0;        // 0-MAX_FOUNTAIN_PWM
 int      motorDirA   = 1;        // 0=STOP, 1=FORWARD, 2=REVERSE
-int      motorSpeedB = 0;
+int      motorSpeedB = 0;        // 0-MAX_FOUNTAIN_PWM
 int      motorDirB   = 1;
 
 // Hardware Serial 2 for Main ESP32 Link
@@ -159,7 +160,7 @@ void updateAllLEDs() {
 
 // ─── TB6612FNG MOTOR DRIVER FUNCTIONS ─────────────────────────────────────────
 void setMotorA(int speed, int direction) {
-  motorSpeedA = constrain(speed, 0, 255);
+  motorSpeedA = constrain(speed, 0, MAX_FOUNTAIN_PWM);
   motorDirA   = direction;
 
   if (motorSpeedA == 0 || motorDirA == 0) {
@@ -178,7 +179,7 @@ void setMotorA(int speed, int direction) {
 }
 
 void setMotorB(int speed, int direction) {
-  motorSpeedB = constrain(speed, 0, 255);
+  motorSpeedB = constrain(speed, 0, MAX_FOUNTAIN_PWM);
   motorDirB   = direction;
 
   if (motorSpeedB == 0 || motorDirB == 0) {
@@ -244,8 +245,8 @@ void processCommand(String line, Stream &replyStream) {
   // RGB <zone 0..2 | 3=all> <r> <g> <b>
   // BRIGHTNESS <0..100>
   // LIGHTS <0|1>
-  // MOTOR <0|1> <speed 0..255> <dir 0..2>
-  // FOUNTAIN <speed 0..255>
+  // MOTOR <0|1> <speed 0..215> <dir 0..2>
+  // FOUNTAIN <speed 0..215>
   // TEST
   // STATUS
   char cmd[32] = {0};
@@ -277,7 +278,7 @@ void processCommand(String line, Stream &replyStream) {
 
   } else if (strcasecmp(cmd, "MOTOR") == 0) {
     int motorId = p1; // 0=A, 1=B
-    int speed   = constrain(p2, 0, 255);
+    int speed   = constrain(p2, 0, MAX_FOUNTAIN_PWM);
     int dir     = (parsed >= 4) ? p3 : 1;
     if (motorId == 0) {
       setMotorA(speed, dir);
@@ -288,7 +289,7 @@ void processCommand(String line, Stream &replyStream) {
     }
 
   } else if (strcasecmp(cmd, "FOUNTAIN") == 0) {
-    int speed = constrain(p1, 0, 255);
+    int speed = constrain(p1, 0, MAX_FOUNTAIN_PWM);
     setMotorA(speed, 1);
     replyStream.printf("OK FOUNTAIN Speed:%d\n", speed);
 

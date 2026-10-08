@@ -43,14 +43,14 @@ const LIGHTING_MODES = [
 export default function LightAndColor({ appState, setAppState, showToast }) {
   const {
     lightsOn, brightness, lightingMode, soundReactiveOn,
-    circleColor, fountainColor, fountainAuxColor, autoDimming
+    reactionIntensity, circleColor, fountainColor, fountainAuxColor, autoDimming
   } = appState;
   const isColorAdaptive = lightingMode === 'Color Adaptive';
 
   const [currentColor, setCurrentColor] = useState(circleColor || '#D4B78C');
   const [isColorsOpen, setIsColorsOpen] = useState(false);
   const [ambientTelemetry, setAmbientTelemetry] = useState({ connected: false, lux: null, brightness: null });
-  const [colorTelemetry, setColorTelemetry] = useState({ connected: false, r: 255, g: 255, b: 255 });
+  const [colorTelemetry, setColorTelemetry] = useState({ connected: false, scanning: false, r: 255, g: 255, b: 255 });
   const isCustomColor = lightingMode === 'Colorful';
 
   useEffect(() => {
@@ -60,7 +60,7 @@ export default function LightAndColor({ appState, setAppState, showToast }) {
       const data = await getLiveSensors();
       if (active) {
         setAmbientTelemetry(data?.ambientLight ?? { connected: false, lux: null, brightness: null });
-        setColorTelemetry(data?.colorSensor ?? { connected: false, r: 255, g: 255, b: 255 });
+        setColorTelemetry(data?.colorSensor ?? { connected: false, scanning: false, r: 255, g: 255, b: 255 });
       }
     };
     refreshSensors();
@@ -217,6 +217,27 @@ export default function LightAndColor({ appState, setAppState, showToast }) {
                 </div>
               </div>
             </div>
+            <div className="card-slider-group">
+              <div className="slider-label-row">
+                <span>Mic sensitivity</span>
+                <span className="value-label">{reactionIntensity}%</span>
+              </div>
+              <input
+                type="range"
+                min="0"
+                max="100"
+                value={reactionIntensity}
+                className="custom-range-slider amber-range"
+                aria-label="Mic sensitivity"
+                onChange={(event) => setAppState((prev) => ({
+                  ...prev,
+                  reactionIntensity: Number(event.target.value)
+                }))}
+              />
+              <span className="card-status-subtext">
+                Sets how strongly the microphone responds to sound.
+              </span>
+            </div>
           </div>
         )}
 
@@ -264,11 +285,11 @@ export default function LightAndColor({ appState, setAppState, showToast }) {
                       className="color-mini-swatch"
                       style={{ backgroundColor: colorTelemetry.connected
                         ? rgbToHex(colorTelemetry.r, colorTelemetry.g, colorTelemetry.b)
-                        : '#e2e8f0' }}
+                        : colorTelemetry.scanning ? '#f59e0b' : '#e2e8f0' }}
                     />
                     {colorTelemetry.connected
-                      ? `Sensor detected ${rgbToHex(colorTelemetry.r, colorTelemetry.g, colorTelemetry.b).toUpperCase()}`
-                      : 'Color sensor offline'}
+                      ? `Sensor reading ${rgbToHex(colorTelemetry.r, colorTelemetry.g, colorTelemetry.b).toUpperCase()}`
+                      : colorTelemetry.scanning ? 'Scanning for a color reading…' : 'Waiting for a color reading…'}
                   </span>
                   <button
                     type="button"

@@ -16,6 +16,7 @@ import './Home.css';
 export default function Home({ appState, setAppState, setActiveTab, showToast, onGateClose }) {
   const {
     lightsOn, brightness, lightingMode,
+    reactionIntensity,
     fountainOn, fountainStrength, fountainColor,
     audioPlaying, audioTrack, volume,
     autoDimming, circleColor, gateOpen
@@ -122,6 +123,29 @@ export default function Home({ appState, setAppState, setActiveTab, showToast, o
               {isAdaptiveBrightness && (
                 <span className="card-status-subtext">Automatically controlled by the ambient light sensor</span>
               )}
+            </div>
+          )}
+          {isSoundReactive && (
+            <div className="card-slider-group">
+              <div className="slider-label-row">
+                <span>Mic sensitivity</span>
+                <span className="value-label">{reactionIntensity}%</span>
+              </div>
+              <input
+                type="range"
+                min="0"
+                max="100"
+                value={reactionIntensity}
+                className="custom-range-slider"
+                aria-label="Mic sensitivity"
+                onChange={(e) => setAppState((prev) => ({
+                  ...prev,
+                  reactionIntensity: Number(e.target.value)
+                }))}
+              />
+              <span className="card-status-subtext">
+                Sets how strongly the microphone responds to sound.
+              </span>
             </div>
           )}
         </div>

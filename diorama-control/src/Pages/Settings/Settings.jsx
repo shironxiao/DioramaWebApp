@@ -83,6 +83,8 @@ const parseSensorList = (payload) => {
         name: formatSensorName(key, sensor),
         active: getSensorStatus(sensor),
         reading: formatSensorReadings(sensor),
+        scanning: sensor.scanning === true,
+        isColorSensor: /color.?sensor/i.test(`${key} ${sensor.name || ''} ${sensor.type || ''}`),
         kind: String(sensor.type ?? key).toLowerCase()
       };
     });
@@ -222,7 +224,11 @@ export default function SettingsPage({ showToast, onOpenRegister }) {
                   </div>
                   <span className={`sensor-val ${sensor.active ? 'active' : 'inactive'}`}>
                     <span className={`dot ${sensor.active ? 'green-dot' : 'muted-dot'}`}></span>
-                    {sensor.active ? sensor.reading : 'Offline'}
+                    {sensor.active
+                      ? sensor.reading
+                      : sensor.isColorSensor
+                        ? sensor.scanning ? 'Scanning for color…' : 'Not scanning'
+                        : 'Offline'}
                   </span>
                 </div>
               );

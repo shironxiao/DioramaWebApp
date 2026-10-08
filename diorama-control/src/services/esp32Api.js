@@ -311,4 +311,3 @@ export const deleteFingerprintUser = async (id) => {
     return { success: false, message: 'ESP32 unreachable' };
   }
 };
-
