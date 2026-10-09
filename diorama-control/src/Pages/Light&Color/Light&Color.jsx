@@ -6,11 +6,12 @@ import {
   Sun,
   ChevronDown,
   ChevronUp,
-  Check
+  Check,
+  Scan
 } from 'lucide-react';
 import DioramaCanvas from '../../components/DioramaCanvas';
 import ColorPicker from '../../components/ColorPicker';
-import { getLiveSensors } from '../../services/esp32Api';
+import { getLiveSensors, triggerColorScan } from '../../services/esp32Api';
 import './Light&Color.css';
 
 const LIGHTING_MODES = [
@@ -54,22 +55,21 @@ export default function LightAndColor({ appState, setAppState, showToast }) {
   const isCustomColor = lightingMode === 'Colorful';
 
   useEffect(() => {
-    if (!isColorAdaptive && !isCustomColor) return undefined;
     let active = true;
     const refreshSensors = async () => {
       const data = await getLiveSensors();
-      if (active) {
-        setAmbientTelemetry(data?.ambientLight ?? { connected: false, lux: null, brightness: null });
-        setColorTelemetry(data?.colorSensor ?? { connected: false, scanning: false, r: 255, g: 255, b: 255 });
+      if (active && data) {
+        if (data.ambientLight) setAmbientTelemetry(data.ambientLight);
+        if (data.colorSensor) setColorTelemetry(data.colorSensor);
       }
     };
     refreshSensors();
-    const interval = setInterval(refreshSensors, 2000);
+    const interval = setInterval(refreshSensors, 500);
     return () => {
       active = false;
       clearInterval(interval);
     };
-  }, [isColorAdaptive, isCustomColor]);
+  }, []);
 
   // Helper for color conversions
   const hexToRgb = (hex) => {
@@ -87,6 +87,35 @@ export default function LightAndColor({ appState, setAppState, showToast }) {
 
   const handlePickerChange = (newRgb) => {
     setCurrentColor(rgbToHex(newRgb.r, newRgb.g, newRgb.b));
+  };
+
+  // Trigger manual Color Scan from hardware color sensor
+  const handleScanSensorColor = async () => {
+    try {
+      const res = await triggerColorScan();
+      let scannedHex = null;
+      if (res && res.hex) {
+        scannedHex = res.hex;
+      } else if (colorTelemetry.connected) {
+        scannedHex = rgbToHex(colorTelemetry.r, colorTelemetry.g, colorTelemetry.b);
+      }
+
+      if (scannedHex) {
+        setCurrentColor(scannedHex);
+        setAppState((prev) => ({
+          ...prev,
+          circleColor: scannedHex,
+          fountainColor: scannedHex,
+          fountainAuxColor: scannedHex
+        }));
+        showToast(`🎨 Scanned color ${scannedHex.toUpperCase()} from sensor!`);
+      } else {
+        showToast('⚠️ No color reading available from sensor yet.');
+      }
+    } catch (err) {
+      console.warn('Error during scan:', err);
+      showToast('⚠️ Could not connect to sensor.');
+    }
   };
 
   // Mode Selection Handler
@@ -294,10 +323,11 @@ export default function LightAndColor({ appState, setAppState, showToast }) {
                   <button
                     type="button"
                     className="btn-amber-sensor"
-                    disabled={!colorTelemetry.connected}
-                    onClick={() => setCurrentColor(rgbToHex(colorTelemetry.r, colorTelemetry.g, colorTelemetry.b))}
+                    onClick={handleScanSensorColor}
+                    title="Capture live sensor color and apply to Diorama"
                   >
-                    Use detected color
+                    <Scan size={14} style={{ marginRight: 6 }} />
+                    Scan Color
                   </button>
                 </div>
 

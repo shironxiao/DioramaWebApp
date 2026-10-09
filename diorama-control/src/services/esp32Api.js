@@ -73,6 +73,22 @@ export const sendColorControl = (hexColor, target = 'left') => {
   return sendEspCommand('/api/color', { r, g, b, target });
 };
 
+export const triggerColorScan = async () => {
+  const isSelfHosted = window.location.hostname === esp32Ip || (window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1');
+  const url = isSelfHosted ? '/api/color/scan' : `http://${esp32Ip}/api/color/scan`;
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 3000);
+    const response = await fetch(url, { method: 'GET', signal: controller.signal, mode: 'cors' });
+    clearTimeout(timeoutId);
+    if (!response.ok) return null;
+    return await response.json();
+  } catch (err) {
+    console.warn('triggerColorScan error:', err);
+    return null;
+  }
+};
+
 export const sendGateControl = (isOpen) => {
   return sendEspCommand('/api/gate', {
     state: isOpen ? 'open' : 'closed'

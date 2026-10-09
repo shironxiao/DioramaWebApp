@@ -1,4 +1,4 @@
-/*
+﻿/*
   Silvestre del Moro Park — Diorama Controller v4
   ESP32 + ILI9488 480×320 + XPT2046 touch + rotary encoder + WiFi HTTP server
 
@@ -14,7 +14,10 @@
   Mic         : GPIO 35  (ADC1 input-only analog; SD is disabled)
   RGB LEDs    : red disabled (GPIO 4 is TFT reset), G=5, B=12
   Shared I2C bus: ESP32 SDA=32, SCL=33 -> VEML7700 and PCA9685 SDA/SCL
-  Color controller UART1: Nano TX -> GPIO 36, ESP32 TX GPIO 22 -> Nano RX, 9600 baud
+  Color controller UART1: Nano TX -> ESP32 GPIO 34 (D34), 9600 baud
+                         Level converter: HV=5V(Nano), HV1=Nano TX, HV-GND=Nano GND
+                                          LV=3.3V(ESP32), LV1=GPIO34(D34), LV-GND=ESP32 GND
+                         BOTH GND pins on the level converter must be connected!
   Color UART packet, one line at 9600 baud: JSON RGB or three RGB numbers
   Fountain    : GPIO 2            (boot-strapping pin; hardware output not enabled)
   Fingerprint : RX2=16 ← sensor TX,  TX2=17 → sensor RX  (UART2)
@@ -43,7 +46,7 @@ struct RGB    { uint8_t r, g, b; };   // must be first — used in function sign
 enum Page     { P_LIGHTS = 0, P_AUDIO = 1, P_SETTINGS = 2 };
 enum Mode     { M_BASIC = 0, M_COLOR = 1, M_SOUND = 2, M_ADAPT = 3 };
 enum Drag     { D_NONE = 0, D_BR, D_HUE, D_SAT, D_SENS, D_VOL };
-enum GateState { GS_WAITING = 0, GS_SCANNING = 1, GS_OPEN = 2, GS_GOODBYE = 3 };
+enum GateState { GS_WAITING = 0, GS_SCANNING = 1, GS_WELCOME = 2, GS_OPEN = 3, GS_GOODBYE = 4 };
 enum EncoderMode { ENC_NAVIGATE, ENC_FOCUS, ENC_ADJUST };
 enum EncoderControl {
   ENC_CONTROL_NONE,
@@ -123,10 +126,11 @@ constexpr bool SD_AUDIO_ENABLED = false;
 #define BLUE_PIN     12
 #define I2C_SDA_PIN 32  // Shared by the ambient sensor and PWM extender
 #define I2C_SCL_PIN 33
-#define COLOR_SENSOR_RX_PIN 36
-#define COLOR_SENSOR_TX_PIN -1
+#define COLOR_SENSOR_RX_PIN 34  // GPIO34 (D34) — UART1 RX from Nano via level converter
+#define COLOR_SENSOR_TX_PIN -1  // TX not needed — ESP32 only receives from Nano
 #define COLOR_SENSOR_BAUD   9600
 #define COLOR_SENSOR_TIMEOUT_MS 5000
+#define COLOR_SENSOR_INVERTED_PWM false // Nano sends direct color values (255=Bright, 0=Dark)
 #define FOUNTAIN_PIN 2
 
 // Fingerprint sensor pins (UART2)
@@ -236,7 +240,9 @@ bool    drainagePumpOn = false; // Software state only until a hardware pin is a
 bool    gateOpen    = false;
 GateState gateState = GS_WAITING;
 uint32_t  gateMs    = 0;
+char      matchedUserName[32] = "";
 const uint32_t SCAN_MS    = 2000;
+const uint32_t WELCOME_MS = 3000;
 const uint32_t GOODBYE_MS = 3000;
 
 // Audio
@@ -292,6 +298,9 @@ uint16_t touchCalData[5] = {};
 bool touchCalibrationReady = false;
 
 // Forward declarations
+void txt(const char* s, int x, int y, int font, uint16_t fg, uint16_t bg, uint8_t datum = TL_DATUM);
+void drawColorPanel();
+void applyScannedColor();
 void drawGateScreen();
 void enterGateState(GateState s);
 void drawHeader();
@@ -301,6 +310,7 @@ void drawSettings();
 void onDrag(int x);
 void pushZones();
 void applyHardwareGate(bool open);
+void sendSlaveRGB(uint8_t group, RGB col, int br);
 void pollEncoder();
 void applyEncoderStep(int direction);
 void syncEncoderControlIndex();
@@ -312,6 +322,55 @@ bool deleteUser(int fpID);
 void togglePlay();
 void stepTrack(int direction);
 int volToAudio(int v);
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// SLAVE ESP32 COMMUNICATION
+// ═══════════════════════════════════════════════════════════════════════════════
+// The slave ESP32 (192.168.4.200) drives 3 RGB LED groups via MOSFET PWM.
+// Master sends fire-and-forget HTTP GET requests — no blocking wait.
+//
+//   Group 1 = Left  Fountain  (zone[0])
+//   Group 2 = Right Fountain  (zone[1])
+//   Group 3 = Inner Circle    (zone[2])
+//
+// The slave also uses inverted PWM (0=bright, 255=off) so we send logical
+// RGB values (0-255) plus brightness (0-100) and let the slave invert.
+
+#define SLAVE_IP "192.168.4.200"
+
+// Send one RGB group command to the slave. Non-blocking — uses WiFiClient
+// with a short timeout so the main loop is never stalled.
+void sendSlaveRGB(uint8_t group, RGB col, int br) {
+  // Skip silently if no stations connected to our AP (slave not online yet)
+  if (WiFi.softAPgetStationNum() == 0) return;
+
+  // group=0 is a special sentinel meaning "all" (used when all zones are identical)
+  const char* grpStr = (group == 0) ? "all"
+                     : (group == 1) ? "1"
+                     : (group == 2) ? "2" : "3";
+
+  // Build raw HTTP request
+  char url[128];
+  if (lightsOn) {
+    snprintf(url, sizeof(url),
+             "GET /rgb?group=%s&r=%d&g=%d&b=%d&brightness=%d HTTP/1.0\r\nHost: " SLAVE_IP "\r\nConnection: close\r\n\r\n",
+             grpStr, col.r, col.g, col.b, br);
+  } else {
+    snprintf(url, sizeof(url),
+             "GET /off HTTP/1.0\r\nHost: " SLAVE_IP "\r\nConnection: close\r\n\r\n");
+  }
+
+  WiFiClient client;
+  client.setTimeout(80);  // ms — short enough not to stall the loop
+  if (!client.connect(SLAVE_IP, 80)) return;  // slave unreachable — skip silently
+  client.print(url);
+  // Drain response quickly then close
+  unsigned long t = millis();
+  while (client.connected() && millis() - t < 80) {
+    while (client.available()) client.read();
+  }
+  client.stop();
+}
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // HARDWARE OUTPUT
@@ -332,6 +391,20 @@ void pushZones() {
     analogWrite(GREEN_PIN, 255);
     analogWrite(BLUE_PIN,  255);
   }
+
+// ── Forward all three zones to slave ESP32 ────────────────────────────────
+  // Use group=all when all zones are the same (1 HTTP call instead of 3).
+  // Use individual calls only when zones differ (Colorful mode with different colors per zone).
+  bool allSame = (zone[0].r == zone[1].r && zone[0].g == zone[1].g && zone[0].b == zone[1].b &&
+                  zone[1].r == zone[2].r && zone[1].g == zone[2].g && zone[1].b == zone[2].b);
+
+  if (allSame) {
+    sendSlaveRGB(0, zone[0], brightness);  // group=0 → sends "all"
+  } else {
+    sendSlaveRGB(1, zone[0], brightness);  // Group 1 = left fountain
+    sendSlaveRGB(2, zone[1], brightness);  // Group 2 = right fountain
+    sendSlaveRGB(3, zone[2], brightness);  // Group 3 = inner circle
+  }
 }
 
 void setAll(RGB c) {
@@ -345,7 +418,8 @@ void applyHardwareGate(bool open) {
   Serial.printf("[GATE] Actuator: %s\n", open ? "OPEN" : "CLOSED");
 }
 
-bool parseColorSensorPacket(const char* packet, RGB* color) {
+int parseColorSensorPacket(const char* packet, RGB* color) {
+  // 1. JSON format: {"r":255,"g":100,"b":50}
   StaticJsonDocument<192> doc;
   if (!deserializeJson(doc, packet) &&
       doc["r"].is<int>() && doc["g"].is<int>() && doc["b"].is<int>()) {
@@ -353,30 +427,73 @@ bool parseColorSensorPacket(const char* packet, RGB* color) {
     const int green = doc["g"].as<int>();
     const int blue = doc["b"].as<int>();
     if (red < 0 || red > 255 || green < 0 || green > 255 ||
-        blue < 0 || blue > 255) return false;
+        blue < 0 || blue > 255) return -1;
     *color = {(uint8_t)red, (uint8_t)green, (uint8_t)blue};
-    return true;
+    return 1;
   }
 
+  // 2. Labeled tokens (e.g. "R:0", "G:0", "B:0" on separate lines or "R:255 G:120 B:50" on one line)
+  static int stateR = -1;
+  static int stateG = -1;
+  static int stateB = -1;
+
+  bool matchedLabel = false;
+  const char* p = packet;
+  while (*p) {
+    while (*p == ' ' || *p == '\t' || *p == ',' || *p == ';') p++;
+    if (!*p) break;
+    if ((*p == 'R' || *p == 'r' || *p == 'G' || *p == 'g' || *p == 'B' || *p == 'b') &&
+        (p[1] == ':' || p[1] == '=' || p[1] == ' ' || (p[1] >= '0' && p[1] <= '9'))) {
+      char chan = (*p >= 'a') ? (*p - 'a' + 'A') : *p;
+      p++;
+      while (*p == ':' || *p == '=' || *p == ' ' || *p == '\t') p++;
+      char* end = nullptr;
+      long val = strtol(p, &end, 10);
+      if (end > p) {
+        val = constrain(val, 0, 255);
+        if (chan == 'R') stateR = (int)val;
+        else if (chan == 'G') stateG = (int)val;
+        else if (chan == 'B') stateB = (int)val;
+        matchedLabel = true;
+        p = end;
+        continue;
+      }
+    }
+    p++;
+  }
+
+  if (matchedLabel) {
+    if (stateR >= 0 && stateG >= 0 && stateB >= 0) {
+      *color = {(uint8_t)stateR, (uint8_t)stateG, (uint8_t)stateB};
+      stateR = stateG = stateB = -1;
+      return 1;
+    }
+    return 0; // Partial component received, waiting for the rest
+  }
+
+  // 3. Three plain comma/space-separated numbers: "120,80,200" or "120 80 200"
   int values[3];
   uint8_t valueCount = 0;
   const char* cursor = packet;
   while (*cursor) {
     const bool negative = *cursor == '-' && cursor[1] >= '0' && cursor[1] <= '9';
     if ((*cursor >= '0' && *cursor <= '9') || negative) {
-      if (valueCount >= 3) return false;
+      if (valueCount >= 3) return -1;
       char* end = nullptr;
       const long value = strtol(cursor, &end, 10);
-      if (end == cursor || value < 0 || value > 255) return false;
+      if (end == cursor || value < 0 || value > 255) return -1;
       values[valueCount++] = (int)value;
       cursor = end;
     } else {
       cursor++;
     }
   }
-  if (valueCount != 3) return false;
-  *color = {(uint8_t)values[0], (uint8_t)values[1], (uint8_t)values[2]};
-  return true;
+  if (valueCount == 3) {
+    *color = {(uint8_t)values[0], (uint8_t)values[1], (uint8_t)values[2]};
+    return 1;
+  }
+
+  return -1;
 }
 
 void updateColorSensorScanForMode() {
@@ -397,8 +514,66 @@ void updateColorSensorScanForMode() {
   }
 }
 
-void processColorSensorColor(const RGB& received) {
-  if (!colorSensorScanning) return;
+void rgbToHsvValues(uint8_t r, uint8_t g, uint8_t b, int* h, int* s) {
+  float rf = r / 255.0f;
+  float gf = g / 255.0f;
+  float bf = b / 255.0f;
+  float maxVal = fmaxf(rf, fmaxf(gf, bf));
+  float minVal = fminf(rf, fminf(gf, bf));
+  float delta = maxVal - minVal;
+
+  if (delta < 0.0001f) {
+    *h = 0;
+    *s = 0;
+    return;
+  }
+
+  if (maxVal > 0.0f) {
+    *s = (int)((delta / maxVal) * 100.0f);
+  } else {
+    *s = 0;
+    *h = 0;
+    return;
+  }
+
+  float hueVal = 0.0f;
+  if (rf >= maxVal) {
+    hueVal = (gf - bf) / delta;
+  } else if (gf >= maxVal) {
+    hueVal = 2.0f + (bf - rf) / delta;
+  } else {
+    hueVal = 4.0f + (rf - gf) / delta;
+  }
+
+  hueVal *= 60.0f;
+  if (hueVal < 0.0f) hueVal += 360.0f;
+  *h = constrain((int)hueVal, 0, 359);
+  *s = constrain(*s, 0, 100);
+}
+
+void applyScannedColor() {
+  cur = detectedColor;
+  rgbToHsvValues(cur.r, cur.g, cur.b, &hue, &sat);
+  zone[0] = zone[1] = zone[2] = cur;
+  lastApplied = 0;
+  pushZones();
+  if (page == P_LIGHTS && tftMode == M_COLOR) {
+    drawColorPanel();
+  }
+  Serial.printf("[COLOR SCAN] Captured & Applied RGB=%u,%u,%u (#%02X%02X%02X)\n",
+                cur.r, cur.g, cur.b, cur.r, cur.g, cur.b);
+}
+
+void processColorSensorColor(const RGB& raw) {
+#if COLOR_SENSOR_INVERTED_PWM
+  const RGB received = {
+    (uint8_t)(255 - raw.r),
+    (uint8_t)(255 - raw.g),
+    (uint8_t)(255 - raw.b)
+  };
+#else
+  const RGB received = raw;
+#endif
 
   detectedColor = received;
   colorSensorAvailable = true;
@@ -407,31 +582,38 @@ void processColorSensorColor(const RGB& received) {
   static uint32_t validPacketLogMs = 0;
   if (colorSensorLastPacketMs - validPacketLogMs >= 1000) {
     validPacketLogMs = colorSensorLastPacketMs;
-    Serial.printf("[COLOR UART] RGB=%u,%u,%u\n",
+    Serial.printf("[COLOR UART] Raw=(%u,%u,%u) -> Logical RGB=(%u,%u,%u) #%02X%02X%02X\n",
+                  raw.r, raw.g, raw.b,
+                  detectedColor.r, detectedColor.g, detectedColor.b,
                   detectedColor.r, detectedColor.g, detectedColor.b);
   }
 
-  cur = detectedColor;
-  zone[0] = zone[1] = zone[2] = detectedColor;
-  lastApplied = 0;
-  pushZones();
-  if (page == P_LIGHTS && tftMode == M_COLOR) drawColorPanel();
+  // Update sensor swatch live on TFT when viewing the Custom Color panel
+  if (page == P_LIGHTS && tftMode == M_COLOR) {
+    tft.fillRect(240, BODY_Y + 170 - 2, 100, 20, C_BG);
+    tft.fillRoundRect(240, BODY_Y + 170 - 2, 26, 18, 4, c565(detectedColor));
+    tft.drawRoundRect(240, BODY_Y + 170 - 2, 26, 18, 4, C_TEXT);
+    char sHex[8];
+    snprintf(sHex, sizeof(sHex), "#%02X%02X%02X", detectedColor.r, detectedColor.g, detectedColor.b);
+    txt(sHex, 272, BODY_Y + 170 + 2, 2, C_GREEN, C_BG, TL_DATUM);
+  }
 }
 
 void processColorSensorPacket(const char* packet) {
   RGB received;
-  if (!parseColorSensorPacket(packet, &received)) {
+  int status = parseColorSensorPacket(packet, &received);
+  if (status == 1) {
+    processColorSensorColor(received);
+  } else if (status == -1) {
     static uint32_t invalidPacketLogMs = 0;
     const uint32_t now = millis();
     if (now - invalidPacketLogMs >= 1000) {
       invalidPacketLogMs = now;
-      Serial.printf("[COLOR UART] Unrecognized line: '%s' (expected JSON RGB or three values, e.g. 120,80,200)\n",
+      Serial.printf("[COLOR UART] Unrecognized line: '%s' (expected JSON RGB or values e.g. R:120, G:80, B:200 or 120,80,200)\n",
                     packet);
     }
-    return;
   }
-
-  processColorSensorColor(received);
+  // status == 0: accepted partial component (e.g. "R:0"), waiting for G and B
 }
 
 void updateColorSensor() {
@@ -619,7 +801,7 @@ bool inRect(int x, int y, int rx, int ry, int rw, int rh) {
 
 // Draw text with given font, colours and datum
 void txt(const char* s, int x, int y, int font, uint16_t fg, uint16_t bg,
-         uint8_t datum = TL_DATUM) {
+         uint8_t datum) {
   tft.setTextColor(fg, bg);
   tft.setTextDatum(datum);
   tft.drawString(s, x, y, font);
@@ -1018,51 +1200,52 @@ void drawGateScreen() {
 
   switch (gateState) {
     case GS_WAITING: {
-      txt("Hi! Welcome!", cx, 100, 4, C_TEXT, C_BG, MC_DATUM);
-      txt("Place your finger on the", cx, 145, 2, C_DIM, C_BG, MC_DATUM);
-      txt("biometric scanner to control your diorama", cx, 170, 2, C_DIM, C_BG, MC_DATUM);
-      
-      // Fingerprint icon visual guide
-      tft.drawCircle(cx, 230, 35, C_GREEN);
-      tft.drawCircle(cx, 230, 28, C_GREEN);
-      tft.drawCircle(cx, 230, 21, C_GREEN);
-      tft.drawFastVLine(cx, 195, 70, C_GREEN);
-      tft.drawFastHLine(cx - 35, 230, 70, C_GREEN);
-      
-      txt(fpSensorAvailable ? "Sensor Active (TX:17, RX:16) - Touch sensor to scan" : "Touch screen to simulate sensor", cx, 290, 1, C_DIM, C_BG, MC_DATUM);
+      // Park name accent line
+      tft.fillRect(cx - 60, 40, 120, 2, C_GREEN);
+
+      txt("Hi! Welcome!", cx, 80, 4, C_TEXT, C_BG, MC_DATUM);
+
+      // Instruction lines — font 2 (16px, always available in TFT_eSPI)
+      txt("Place your finger on the", cx, 148, 2, C_DIM, C_BG, MC_DATUM);
+      txt("biometric scanner", cx, 178, 2, C_GREEN, C_BG, MC_DATUM);
+      txt("to control your diorama.", cx, 208, 2, C_DIM, C_BG, MC_DATUM);
       break;
     }
     case GS_SCANNING: {
-      txt("Scanning Fingerprint...", cx, 110, 4, C_AMBER, C_BG, MC_DATUM);
-      txt("Verifying biometric data, please wait...", cx, 150, 2, C_DIM, C_BG, MC_DATUM);
-
-      // Animated fingerprint icon while scanning
-      tft.drawCircle(cx, 210, 35, C_AMBER);
-      tft.drawCircle(cx, 210, 28, C_AMBER);
-      tft.drawCircle(cx, 210, 21, C_AMBER);
-      tft.drawFastVLine(cx, 175, 70, C_AMBER);
-      tft.drawFastHLine(cx - 35, 210, 70, C_AMBER);
+      txt("Scanning...", cx, 100, 4, C_AMBER, C_BG, MC_DATUM);
+      txt("Verifying your fingerprint,", cx, 160, 2, C_DIM, C_BG, MC_DATUM);
+      txt("please wait...", cx, 188, 2, C_DIM, C_BG, MC_DATUM);
 
       // Progress bar rail
-      tft.fillRoundRect(cx - 120, 270, 240, 12, 6, C_TRACK);
+      tft.fillRoundRect(cx - 140, 250, 280, 14, 7, C_TRACK);
       uint32_t elapsed = millis() - gateMs;
-      int fw = constrain((int)(240L * elapsed / SCAN_MS), 0, 240);
-      if (fw > 0) tft.fillRoundRect(cx - 120, 270, fw, 12, 6, C_GREEN);
+      int fw = constrain((int)(280L * elapsed / SCAN_MS), 0, 280);
+      if (fw > 0) tft.fillRoundRect(cx - 140, 250, fw, 14, 7, C_AMBER);
+      break;
+    }
+    case GS_WELCOME: {
+      // Green accent bar
+      tft.fillRoundRect(cx - 80, 55, 160, 4, 2, C_GREEN);
+
+      txt("Welcome!", cx, 95, 4, C_GREEN, C_BG, MC_DATUM);
+
+      txt("The gate is now open.", cx, 150, 2, C_TEXT, C_BG, MC_DATUM);
+      txt("Enjoy your diorama experience.", cx, 178, 2, C_DIM, C_BG, MC_DATUM);
+
+      // Open padlock icon
+      tft.drawCircle(cx, 248, 16, C_GREEN);
+      tft.fillRect(cx - 17, 248, 34, 16, C_BG); // erase lower half (open shackle)
+      tft.fillRoundRect(cx - 16, 256, 32, 24, 4, C_GREEN);
+      tft.fillCircle(cx, 265, 4, C_WHITE);
       break;
     }
     case GS_OPEN: {
-      // Open padlock — shackle drawn as open arc using segments
-      tft.drawCircle(cx, cy - 6, 18, C_GREEN);
-      tft.fillRect(cx - 19, cy - 6, 38, 20, C_CARD); // erase lower half of circle
-      tft.fillRoundRect(cx - 18, cy + 6, 36, 28, 4, C_GREEN);
-      tft.fillCircle(cx, cy + 17, 5, C_WHITE);
-
-      txt("Access Granted!", cx, 178, 4, C_GREEN, C_BG, MC_DATUM);
-      txt("You may now control the diorama.", cx, 208, 2, C_DIM, C_BG, MC_DATUM);
+      // This state draws nothing on the gate screen —
+      // enterGateState(GS_OPEN) immediately calls drawHeader/drawLights.
       break;
     }
     case GS_GOODBYE: {
-      // Closed padlock — full circle shackle
+      // Closed padlock
       tft.drawCircle(cx, cy - 6, 18, C_RED);
       tft.fillRoundRect(cx - 18, cy + 6, 36, 28, 4, C_RED);
       tft.fillCircle(cx, cy + 17, 5, C_WHITE);
@@ -1083,6 +1266,7 @@ void enterGateState(GateState s) {
       Serial.println("[GATE] WAITING");
       gateOpen = false;
       lightsOn = false;
+      matchedUserName[0] = '\0';
       applyHardwareGate(false);
       pushZones();
       drawGateScreen();
@@ -1090,6 +1274,11 @@ void enterGateState(GateState s) {
 
     case GS_SCANNING:
       Serial.println("[GATE] SCANNING");
+      drawGateScreen();
+      break;
+
+    case GS_WELCOME:
+      Serial.println("[GATE] WELCOME — showing for 3s");
       drawGateScreen();
       break;
 
@@ -1108,6 +1297,7 @@ void enterGateState(GateState s) {
       gateOpen = false;
       lightsOn = false;
       fountainOn = false;
+      matchedUserName[0] = '\0';
       applyHardwareGate(false);
       pushZones();
       drawGateScreen();
@@ -1130,8 +1320,11 @@ void pollGate() {
           if (p == FINGERPRINT_OK) {
             p = finger.fingerSearch();
             if (p == FINGERPRINT_OK) {
-              Serial.printf("[FP] Match found! ID #%d (%s)\n", finger.fingerID, getUserName(finger.fingerID));
-              enterGateState(GS_OPEN);
+              const char* name = getUserName(finger.fingerID);
+              Serial.printf("[FP] Match found! ID #%d (%s)\n", finger.fingerID, name);
+              strncpy(matchedUserName, name ? name : "", sizeof(matchedUserName) - 1);
+              matchedUserName[sizeof(matchedUserName) - 1] = '\0';
+              enterGateState(GS_WELCOME);
               return;
             } else {
               Serial.println("[FP] Fingerprint not recognized");
@@ -1154,11 +1347,16 @@ void pollGate() {
     // Animate the progress bar while waiting
     uint32_t elapsed = millis() - gateMs;
     if (elapsed >= SCAN_MS) {
-      enterGateState(GS_OPEN);
+      enterGateState(GS_OPEN); // fallback: no real FP matched, e.g. touch-sim
     } else {
       int cx = W / 2;
-      int fw = constrain((int)(240L * elapsed / SCAN_MS), 0, 240);
-      tft.fillRoundRect(cx - 120, 240, fw, 12, 6, C_GREEN);
+      int fw = constrain((int)(280L * elapsed / SCAN_MS), 0, 280);
+      tft.fillRoundRect(cx - 140, 250, fw, 14, 7, C_AMBER);
+    }
+  } else if (gateState == GS_WELCOME) {
+    // Show greeting for WELCOME_MS then unlock the full UI
+    if (millis() - gateMs >= WELCOME_MS) {
+      enterGateState(GS_OPEN);
     }
   } else if (gateState == GS_GOODBYE) {
     if (millis() - gateMs >= GOODBYE_MS) enterGateState(GS_WAITING);
@@ -1243,23 +1441,20 @@ void drawColorPanel() {
 
   // ── Colour preview + hex ──────────────────────────────────────────────────
   label("Color:", SL_X0, py + 2);
-  tft.fillRoundRect(72, py - 2, 36, 18, 4, c565(cur));
-  tft.drawRoundRect(72, py - 2, 36, 18, 4, C_TEXT);
+  tft.fillRoundRect(65, py - 2, 28, 18, 4, c565(cur));
+  tft.drawRoundRect(65, py - 2, 28, 18, 4, C_TEXT);
   char hex[8]; snprintf(hex, sizeof(hex), "#%02X%02X%02X", cur.r, cur.g, cur.b);
-  txt(hex, 114, py + 2, 2, C_TEXT, C_BG, TL_DATUM);
+  txt(hex, 98, py + 2, 2, C_TEXT, C_BG, TL_DATUM);
 
-  char sensorLabel[32];
-  if (colorSensorAvailable) {
-    snprintf(sensorLabel, sizeof(sensorLabel), "Sensor #%02X%02X%02X",
-             detectedColor.r, detectedColor.g, detectedColor.b);
-  } else if (colorSensorScanning) {
-    strlcpy(sensorLabel, "Waiting for color...", sizeof(sensorLabel));
-  } else {
-    strlcpy(sensorLabel, "Select Custom Color mode", sizeof(sensorLabel));
-  }
-  const uint16_t sensorLabelColor = colorSensorAvailable ? C_GREEN
-                                      : colorSensorScanning ? C_AMBER : C_DIM;
-  txt(sensorLabel, 460, py + 8, 2, sensorLabelColor, C_BG, TR_DATUM);
+  // ── Live sensor reading preview ───────────────────────────────────────────
+  label("Sensor:", 185, py + 2);
+  tft.fillRoundRect(240, py - 2, 26, 18, 4, colorSensorAvailable ? c565(detectedColor) : C_TRACK);
+  tft.drawRoundRect(240, py - 2, 26, 18, 4, C_TEXT);
+  char sHex[8]; snprintf(sHex, sizeof(sHex), "#%02X%02X%02X", detectedColor.r, detectedColor.g, detectedColor.b);
+  txt(colorSensorAvailable ? sHex : "---", 270, py + 2, 2, colorSensorAvailable ? C_GREEN : C_DIM, C_BG, TL_DATUM);
+
+  // ── Scan Color Button ─────────────────────────────────────────────────────
+  btn(345, py - 4, 115, 24, "SCAN COLOR", false, C_AMBER, 1);
 
   // ── Hue gradient slider ───────────────────────────────────────────────────
   label("Hue", SL_X0, py + 22);
@@ -1438,54 +1633,74 @@ void drawSettings() {
   tft.fillRect(0, BODY_Y, W, BODY_H, C_BG);
 
   // Title
-  txt("Fingerprint Management", W / 2, BODY_Y + 14, 4, C_TEXT, C_BG, MC_DATUM);
-  
+  txt("Settings", W / 2, BODY_Y + 14, 4, C_TEXT, C_BG, MC_DATUM);
+
+  // ── Drain Water card ───────────────────────────────────────────────────────
+  int dy = BODY_Y + 44;
+  card(10, dy, 460, 48, C_CARD, drainagePumpOn ? C_GREEN : C_BORDER);
+
+  // Pump icon (simplified drop shape)
+  tft.fillCircle(36, dy + 24, 12, drainagePumpOn ? C_GREEN : C_TRACK);
+  tft.fillTriangle(28, dy + 22, 44, dy + 22, 36, dy + 10,
+                   drainagePumpOn ? C_GREEN : C_TRACK);
+
+  txt(drainagePumpOn ? "Drain: RUNNING" : "Drain: STOPPED",
+      58, dy + 10, 4, C_TEXT, C_CARD, TL_DATUM);
+  txt("Water drainage pump", 58, dy + 30, 2, C_DIM, C_CARD, TL_DATUM);
+
+  // ON / OFF buttons
+  uint16_t onFill  = drainagePumpOn  ? C_GREEN  : C_CARD;
+  uint16_t offFill = !drainagePumpOn ? C_RED    : C_CARD;
+  card(300, dy + 8, 64, 32, onFill,  drainagePumpOn  ? C_GREEN : C_BORDER);
+  txt("ON",  332, dy + 24, 2, drainagePumpOn  ? C_WHITE : C_TEXT, onFill,  MC_DATUM);
+  card(374, dy + 8, 64, 32, offFill, !drainagePumpOn ? C_RED   : C_BORDER);
+  txt("OFF", 406, dy + 24, 2, !drainagePumpOn ? C_WHITE : C_TEXT, offFill, MC_DATUM);
+
+  // ── Fingerprint Management ─────────────────────────────────────────────────
+  label("Fingerprint Management", 20, BODY_Y + 104);
+
   // Sensor status
   const char* status = fpSensorAvailable ? "Connected" : "Dummy Mode";
   uint16_t statusColor = fpSensorAvailable ? C_GREEN : C_AMBER;
-  txt(status, W / 2, BODY_Y + 42, 2, statusColor, C_BG, MC_DATUM);
-  
+  txt(status, W / 2, BODY_Y + 120, 2, statusColor, C_BG, MC_DATUM);
+
   // Enroll button
-  card(40, BODY_Y + 60, 180, 50, C_GREEN, C_GREEN);
-  txt("Enroll New", 130, BODY_Y + 85, 2, C_WHITE, C_GREEN, MC_DATUM);
-  drawFocusCue(40, BODY_Y + 60, 180, 50, 1, true);
-  drawEncoderFocusCue(40, BODY_Y + 60, 180, 50,
+  card(40, BODY_Y + 136, 180, 40, C_GREEN, C_GREEN);
+  txt("Enroll New", 130, BODY_Y + 156, 2, C_WHITE, C_GREEN, MC_DATUM);
+  drawFocusCue(40, BODY_Y + 136, 180, 40, 1, true);
+  drawEncoderFocusCue(40, BODY_Y + 136, 180, 40,
                       encoderControl == ENC_CONTROL_SETTINGS_ENROLL);
-  
+
   // List users section
-  label("Enrolled Users:", 20, BODY_Y + 125);
-  
+  label("Enrolled Users:", 20, BODY_Y + 188);
+
   if (userCount == 0) {
-    txt("No users enrolled yet", W / 2, BODY_Y + 160, 2, C_DIM, C_BG, MC_DATUM);
+    txt("No users enrolled yet", W / 2, BODY_Y + 210, 2, C_DIM, C_BG, MC_DATUM);
   } else {
-    int y = BODY_Y + 145;
-    for (int i = 0; i < min(userCount, 6); i++) {
-      // User card
+    int y = BODY_Y + 206;
+    for (int i = 0; i < min(userCount, 3); i++) {   // show 3 max (less space now)
       card(20, y, 440, 28, C_CARD, C_BORDER);
-      
-      // ID badge
+
       tft.fillCircle(35, y + 14, 10, C_PURPLE);
       char idStr[4];
       snprintf(idStr, sizeof(idStr), "%d", users[i].id);
       txt(idStr, 35, y + 14, 2, C_WHITE, C_PURPLE, MC_DATUM);
-      
-      // Name
+
       txt(users[i].name, 55, y + 14, 2, C_TEXT, C_CARD, ML_DATUM);
-      
-      // Delete button
+
       tft.fillRoundRect(410, y + 6, 40, 16, 4, C_RED);
       txt("DEL", 430, y + 14, 1, C_WHITE, C_RED, MC_DATUM);
       drawFocusCue(390, y + 6, 60, 16, i + 2, false);
       drawEncoderFocusCue(390, y + 6, 60, 16,
           encoderControl == static_cast<EncoderControl>(ENC_CONTROL_SETTINGS_DELETE_0 + i));
-      
+
       y += 32;
     }
-    
-    if (userCount > 6) {
+
+    if (userCount > 3) {
       char more[24];
-      snprintf(more, sizeof(more), "+%d more...", userCount - 6);
-      txt(more, W / 2, y + 10, 2, C_DIM, C_BG, MC_DATUM);
+      snprintf(more, sizeof(more), "+%d more...", userCount - 3);
+      txt(more, W / 2, BODY_Y + 310, 2, C_DIM, C_BG, MC_DATUM);
     }
   }
 }
@@ -2187,19 +2402,35 @@ void onPress(int x, int y) {
 
   // ── Settings page ──────────────────────────────────────────────────────────
   if (page == P_SETTINGS) {
-    // Enroll New button
-    if (inRect(x, y, 40, BODY_Y + 60, 180, 50)) {
+    int dy = BODY_Y + 44;
+
+    // Drain ON button
+    if (inRect(x, y, 300, dy + 8, 64, 32)) {
+      drainagePumpOn = true;
+      Serial.println("[DRAIN] ON (software only — no GPIO configured yet)");
+      drawSettings();
+      return;
+    }
+    // Drain OFF button
+    if (inRect(x, y, 374, dy + 8, 64, 32)) {
+      drainagePumpOn = false;
+      Serial.println("[DRAIN] OFF");
+      drawSettings();
+      return;
+    }
+
+    // Enroll New button (shifted down to BODY_Y+136)
+    if (inRect(x, y, 40, BODY_Y + 136, 180, 40)) {
       selectEncoderControl(ENC_CONTROL_SETTINGS_ENROLL);
       startEnrollment();
       return;
     }
-    
-    // Delete user buttons
+
+    // Delete user buttons (shifted down to BODY_Y+206)
     if (userCount > 0) {
-      int cy = BODY_Y + 145;
-      for (int i = 0; i < min(userCount, 6); i++) {
+      int cy = BODY_Y + 206;
+      for (int i = 0; i < min(userCount, 3); i++) {
         if (inRect(x, y, 410, cy + 6, 40, 16)) {
-          // Delete this user
           const int deletedID = users[i].id;
           selectEncoderControl(static_cast<EncoderControl>(ENC_CONTROL_SETTINGS_DELETE_0 + i));
           deleteUser(deletedID);
@@ -2275,6 +2506,18 @@ void onPress(int x, int y) {
       return;
     }
 
+    // ── Custom Color mode touch zones (checked BEFORE brightness to avoid overlap) ──
+    if (tftMode == M_COLOR) {
+      int py = BODY_Y + 170;
+
+      // Scan Color button at (345, py-4, 115, 24) — checked first because it
+      // overlaps the bottom of the brightness slider hit zone (BODY_Y+116..+168)
+      if (inRect(x, y, 345, py - 4, 115, 24)) {
+        applyScannedColor();
+        return;
+      }
+    }
+
     // Brightness is adjustable only in Basic and Custom Color modes.
     if (tftMode != M_SOUND && tftMode != M_ADAPT &&
         inRect(x, y, SL_X0, BODY_Y + 116, SL_X1 - SL_X0, 52)) {
@@ -2283,7 +2526,7 @@ void onPress(int x, int y) {
       dragging = D_BR; onDrag(x); return;
     }
 
-    // ── Custom Color mode touch zones ─────────────────────────────────────
+    // ── Custom Color mode remaining touch zones ────────────────────────────
     if (tftMode == M_COLOR) {
       int py = BODY_Y + 170;
 
@@ -2546,6 +2789,17 @@ void handleColor() {
 
   pushZones();
   jsonOk();
+}
+
+// ── GET /api/color/scan → triggers color capture from sensor & syncs to zones/TFT ──
+void handleColorScan() {
+  applyScannedColor();
+  char buf[128];
+  snprintf(buf, sizeof(buf),
+    "{\"success\":true,\"r\":%u,\"g\":%u,\"b\":%u,\"hex\":\"#%02X%02X%02X\"}",
+    cur.r, cur.g, cur.b, cur.r, cur.g, cur.b
+  );
+  server.send(200, "application/json", buf);
 }
 
 // ── GET /api/fountain?state=on|off&strength=0-100&auxStrength=0-100 ──────────
@@ -2962,6 +3216,7 @@ void setupRoutes() {
   server.on("/api/light",            HTTP_OPTIONS, handleOptions);
   server.on("/api/mode",             HTTP_OPTIONS, handleOptions);
   server.on("/api/color",            HTTP_OPTIONS, handleOptions);
+  server.on("/api/color/scan",       HTTP_OPTIONS, handleOptions);
   server.on("/api/fountain",         HTTP_OPTIONS, handleOptions);
   server.on("/api/drainage-pump",   HTTP_OPTIONS, handleOptions);
   server.on("/api/gate",             HTTP_OPTIONS, handleOptions);
@@ -2983,6 +3238,7 @@ void setupRoutes() {
   server.on("/api/light",  HTTP_GET, []() { addCORSHeaders(); handleLight();        });
   server.on("/api/mode",   HTTP_GET, []() { addCORSHeaders(); handleMode();         });
   server.on("/api/color",  HTTP_GET, []() { addCORSHeaders(); handleColor();        });
+  server.on("/api/color/scan", HTTP_GET, []() { addCORSHeaders(); handleColorScan();    });
   server.on("/api/fountain",HTTP_GET,[]() { addCORSHeaders(); handleFountain();     });
   server.on("/api/drainage-pump",HTTP_GET,[]() { addCORSHeaders(); handleDrainagePump(); });
   server.on("/api/gate",   HTTP_GET, []() { addCORSHeaders(); handleGate();         });
