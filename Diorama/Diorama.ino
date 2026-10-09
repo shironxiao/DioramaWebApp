@@ -345,6 +345,12 @@ int volToAudio(int v);
 
 #define SLAVE_IP "192.168.4.200"
 
+// If the slave is offline / reboot-looping, connect() can block the main loop and
+// make the web app unreachable. Back off hard after a failed attempt.
+static uint32_t slaveBackoffUntilMs = 0;
+static uint32_t lastSlaveOkMs       = 0;
+static uint32_t lastSlavePushMs     = 0;
+
 // Short mode tag for the slave (URL-safe, no spaces).
 const char* slaveModeTag() {
   if (lightMode == "Basic")           return "Basic";
@@ -360,14 +366,15 @@ RGB slaveRgbForMode(RGB col) {
   return col;
 }
 
-// Send one RGB group command to the slave. Non-blocking — uses WiFiClient
-// with a short timeout so the main loop is never stalled.
-// Always includes &mode= so the slave knows which light mode owns this output.
+// Send one RGB group command to the slave.
+// Fail-fast + backoff so a dead/rebooting slave cannot freeze the web server.
+// Phone/PC and slave may both join the SoftAP — that is normal and supported.
 void sendSlaveRGB(uint8_t group, RGB col, int br) {
-  // Skip silently if no stations connected to our AP (slave not online yet)
   if (WiFi.softAPgetStationNum() == 0) return;
 
-  // group=0 is a special sentinel meaning "all" (used when all zones are identical)
+  const uint32_t now = millis();
+  if (now < slaveBackoffUntilMs) return;  // slave recently unreachable — protect web UI
+
   const char* grpStr = (group == 0) ? "all"
                      : (group == 1) ? "1"
                      : (group == 2) ? "2" : "3";
@@ -375,7 +382,6 @@ void sendSlaveRGB(uint8_t group, RGB col, int br) {
   const RGB out = slaveRgbForMode(col);
   const char* mode = slaveModeTag();
 
-  // Build raw HTTP request
   char url[192];
   if (lightsOn) {
     snprintf(url, sizeof(url),
@@ -388,38 +394,41 @@ void sendSlaveRGB(uint8_t group, RGB col, int br) {
   }
 
   WiFiClient client;
-  client.setTimeout(80);  // ms — short enough not to stall the loop
-  if (!client.connect(SLAVE_IP, 80)) return;  // slave unreachable — skip silently
+  client.setTimeout(50);
+  if (!client.connect(SLAVE_IP, 80)) {
+    // Slave down or rebooting — pause slave traffic so SoftAP stays free for the phone
+    slaveBackoffUntilMs = now + 4000;
+    Serial.println("[SLAVE] Unreachable — backing off 4s (web app stays available)");
+    return;
+  }
+
   client.print(url);
-  // Drain response quickly then close
   unsigned long t = millis();
-  while (client.connected() && millis() - t < 80) {
+  while (client.connected() && millis() - t < 40) {
     while (client.available()) client.read();
   }
   client.stop();
+  lastSlaveOkMs = millis();
+  slaveBackoffUntilMs = 0;
 }
 
-// Re-push current mode RGB whenever the slave (re)joins the AP.
-// No periodic re-push in Sound Reactive — that mode already streams live colors.
+// Occasional steady-mode refresh. Never blocks with delay().
+// Does NOT treat phone connect as slave connect (that used to stall the web app).
 void syncSlaveIfConnected() {
-  static uint8_t lastStations = 0;
   static uint32_t lastSyncMs = 0;
   const uint8_t stations = WiFi.softAPgetStationNum();
   const uint32_t now = millis();
 
-  const bool justJoined = (stations > 0 && lastStations == 0);
-  // Steady modes only: keep slave locked to the mode's intended RGB
+  if (stations == 0) return;
+  if (now < slaveBackoffUntilMs) return;
+
+  // Only gentle resync for steady modes; Sound Reactive already pushes live
   const bool steadyMode = (lightMode == "Basic" || lightMode == "Colorful" || lightMode == "Color Adaptive");
-  const bool periodic   = (stations > 0 && steadyMode && now - lastSyncMs >= 3000);
-  if (justJoined || periodic) {
-    if (justJoined) {
-      Serial.printf("[SLAVE] Station joined — syncing mode=%s RGB to slave\n", slaveModeTag());
-      delay(200);  // let slave HTTP server finish starting
-    }
-    pushZones();
-    lastSyncMs = now;
-  }
-  lastStations = stations;
+  if (!steadyMode) return;
+  if (now - lastSyncMs < 8000) return;
+
+  lastSyncMs = now;
+  pushZones();
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -447,9 +456,12 @@ void pushZones() {
     analogWrite(BLUE_PIN,  255);
   }
 
-// ── Forward all three zones to slave ESP32 ────────────────────────────────
-  // Use group=all when all zones are the same (1 HTTP call instead of 3).
-  // Use individual calls only when zones differ (Colorful mode with different colors per zone).
+// ── Forward zones to slave ESP32 (throttled so SoftAP can still serve the web app)
+  const uint32_t nowSlave = millis();
+  // Sound Reactive can request updates every ~40ms — cap slave HTTP to ~8/s
+  if (lightMode == "Sound Reactive" && (nowSlave - lastSlavePushMs) < 120) return;
+  lastSlavePushMs = nowSlave;
+
   bool allSame = (zone[0].r == zone[1].r && zone[0].g == zone[1].g && zone[0].b == zone[1].b &&
                   zone[1].r == zone[2].r && zone[1].g == zone[2].g && zone[1].b == zone[2].b);
 
@@ -3637,12 +3649,15 @@ void setup() {
   txt("Starting WiFi AP...", W / 2, H / 2 - 20, 2, C_DIM, C_BG, MC_DATUM);
 
   WiFi.mode(WIFI_AP);
-  WiFi.softAP(WIFI_AP_SSID, WIFI_AP_PASS);
+  // SoftAP can host phone/PC + slave ESP together (max 8 stations).
+  // Sharing the hotspot is expected — it does NOT block the web app by itself.
+  WiFi.softAP(WIFI_AP_SSID, WIFI_AP_PASS, 1 /*channel*/, 0 /*not hidden*/, 8 /*max conn*/);
   delay(500); // give AP time to start
 
   IPAddress apIP = WiFi.softAPIP();
-  Serial.printf("[WiFi] AP started — SSID: %s  IP: %s\n",
+  Serial.printf("[WiFi] AP started — SSID: %s  IP: %s  (phone + slave OK on same AP)\n",
                 WIFI_AP_SSID, apIP.toString().c_str());
+  Serial.println("[WiFi] Open web app at http://192.168.4.1");
 
   // Show connection info on TFT
   tft.fillScreen(C_BG);
@@ -3674,16 +3689,20 @@ void setup() {
 }
 
 void loop() {
+  // Serve web clients first so SoftAP stays responsive even if slave is flaky
+  server.handleClient();
+
   updateColorSensor();
   updateAmbientSensor();
   updateMicSensor();
   pollEncoder();
 
-  // HTTP requests — handled on same core as loop (core 1)
   server.handleClient();
 
-  // Keep slave RGB in sync with current light mode (Basic white / Custom / Sound / Adaptive)
+  // Slave sync is fail-fast + backoff — never delay() here
   syncSlaveIfConnected();
+
+  server.handleClient();
 
   // Gate state machine (timed transitions)
   pollGate();
@@ -3700,4 +3719,6 @@ void loop() {
   
   // Enrollment polling
   pollEnrollment();
+
+  server.handleClient();
 }
