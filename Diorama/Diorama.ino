@@ -333,13 +333,36 @@ int volToAudio(int v);
 //   Group 2 = Right Fountain  (zone[1])
 //   Group 3 = Inner Circle    (zone[2])
 //
+// Every /rgb (and /off) includes &mode=Basic|Colorful|Sound|Adaptive so the
+// slave knows which light mode owns the output:
+//   Basic     → white (255,255,255)
+//   Colorful  → custom zone RGB
+//   Sound     → live sound-reactive RGB
+//   Adaptive  → zone RGB + ambient brightness
+//
 // The slave also uses inverted PWM (0=bright, 255=off) so we send logical
 // RGB values (0-255) plus brightness (0-100) and let the slave invert.
 
 #define SLAVE_IP "192.168.4.200"
 
+// Short mode tag for the slave (URL-safe, no spaces).
+const char* slaveModeTag() {
+  if (lightMode == "Basic")           return "Basic";
+  if (lightMode == "Colorful")        return "Colorful";
+  if (lightMode == "Sound Reactive")  return "Sound";
+  if (lightMode == "Color Adaptive")  return "Adaptive";
+  return "Basic";
+}
+
+// Mode-correct RGB for the slave: Basic is always white; other modes use zone colors.
+RGB slaveRgbForMode(RGB col) {
+  if (lightMode == "Basic") return {255, 255, 255};
+  return col;
+}
+
 // Send one RGB group command to the slave. Non-blocking — uses WiFiClient
 // with a short timeout so the main loop is never stalled.
+// Always includes &mode= so the slave knows which light mode owns this output.
 void sendSlaveRGB(uint8_t group, RGB col, int br) {
   // Skip silently if no stations connected to our AP (slave not online yet)
   if (WiFi.softAPgetStationNum() == 0) return;
@@ -349,15 +372,19 @@ void sendSlaveRGB(uint8_t group, RGB col, int br) {
                      : (group == 1) ? "1"
                      : (group == 2) ? "2" : "3";
 
+  const RGB out = slaveRgbForMode(col);
+  const char* mode = slaveModeTag();
+
   // Build raw HTTP request
-  char url[128];
+  char url[192];
   if (lightsOn) {
     snprintf(url, sizeof(url),
-             "GET /rgb?group=%s&r=%d&g=%d&b=%d&brightness=%d HTTP/1.0\r\nHost: " SLAVE_IP "\r\nConnection: close\r\n\r\n",
-             grpStr, col.r, col.g, col.b, br);
+             "GET /rgb?group=%s&r=%d&g=%d&b=%d&brightness=%d&mode=%s HTTP/1.0\r\nHost: " SLAVE_IP "\r\nConnection: close\r\n\r\n",
+             grpStr, out.r, out.g, out.b, br, mode);
   } else {
     snprintf(url, sizeof(url),
-             "GET /off HTTP/1.0\r\nHost: " SLAVE_IP "\r\nConnection: close\r\n\r\n");
+             "GET /off?mode=%s HTTP/1.0\r\nHost: " SLAVE_IP "\r\nConnection: close\r\n\r\n",
+             mode);
   }
 
   WiFiClient client;
@@ -372,13 +399,41 @@ void sendSlaveRGB(uint8_t group, RGB col, int br) {
   client.stop();
 }
 
+// Re-push current mode RGB whenever the slave (re)joins the AP.
+// No periodic re-push in Sound Reactive — that mode already streams live colors.
+void syncSlaveIfConnected() {
+  static uint8_t lastStations = 0;
+  static uint32_t lastSyncMs = 0;
+  const uint8_t stations = WiFi.softAPgetStationNum();
+  const uint32_t now = millis();
+
+  const bool justJoined = (stations > 0 && lastStations == 0);
+  // Steady modes only: keep slave locked to the mode's intended RGB
+  const bool steadyMode = (lightMode == "Basic" || lightMode == "Colorful" || lightMode == "Color Adaptive");
+  const bool periodic   = (stations > 0 && steadyMode && now - lastSyncMs >= 3000);
+  if (justJoined || periodic) {
+    if (justJoined) {
+      Serial.printf("[SLAVE] Station joined — syncing mode=%s RGB to slave\n", slaveModeTag());
+      delay(200);  // let slave HTTP server finish starting
+    }
+    pushZones();
+    lastSyncMs = now;
+  }
+  lastStations = stations;
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // HARDWARE OUTPUT
 // ═══════════════════════════════════════════════════════════════════════════════
 
 // Push logical RGB zone colors to the inverted MOSFET PWM outputs.
 // All three zones share one RGB strip on current wiring → use zone[2] (center).
+// Basic mode is locked to white here so nothing (sensor, web color, leftover
+// sound-reactive zones) can keep changing the RGB while Basic is selected.
 void pushZones() {
+  if (lightMode == "Basic") {
+    zone[0] = zone[1] = zone[2] = {255, 255, 255};
+  }
   for (int i = 0; i < 3; i++) {
     zone[i].r = constrain(zone[i].r, 0, 255);
     zone[i].g = constrain(zone[i].g, 0, 255);
@@ -552,6 +607,13 @@ void rgbToHsvValues(uint8_t r, uint8_t g, uint8_t b, int* h, int* s) {
 }
 
 void applyScannedColor() {
+  // Scanned colors only apply in Custom Color mode — never override Basic white
+  // or Sound/Adaptive live output.
+  if (lightMode != "Colorful") {
+    Serial.printf("[COLOR SCAN] Ignored (mode=%s); only Custom Color applies scans\n",
+                  lightMode.c_str());
+    return;
+  }
   cur = detectedColor;
   rgbToHsvValues(cur.r, cur.g, cur.b, &hue, &sat);
   zone[0] = zone[1] = zone[2] = cur;
@@ -1796,6 +1858,10 @@ void selectEncoderControl(EncoderControl control) {
 
 void applyColorZone(uint8_t zoneIndex) {
   if (zoneIndex > 3) return;
+  if (lightMode != "Colorful") {
+    Serial.printf("[COLOR] Ignored apply (mode=%s); Custom Color only\n", lightMode.c_str());
+    return;
+  }
   if (zoneIndex == 0) zone[0] = zone[1] = zone[2] = cur;
   else zone[zoneIndex - 1] = cur;
   lastApplied = zoneIndex;
@@ -1933,16 +1999,24 @@ void applyEncoderStep(int direction) {
       tftMode = static_cast<Mode>((static_cast<int>(tftMode) + direction + 4) % 4);
       if (tftMode == M_BASIC) {
         lightMode = "Basic";
-        setAll({255, 255, 255});
+        soundReactive = false;
+        setAll({255, 255, 255});  // Basic → white on master + slave
       } else if (tftMode == M_COLOR) {
         lightMode = "Colorful";
+        soundReactive = false;
+        pushZones();              // tell slave mode + current custom RGB
       } else if (tftMode == M_SOUND) {
         lightMode = "Sound Reactive";
+        soundReactive = true;
+        pushZones();
       } else {
         lightMode = "Color Adaptive";
+        soundReactive = false;
+        pushZones();
       }
       updateColorSensorScanForMode();
-      Serial.printf("[ENCODER] Lighting mode: %s\n", lightMode.c_str());
+      Serial.printf("[ENCODER] Lighting mode: %s → slave mode=%s\n",
+                    lightMode.c_str(), slaveModeTag());
       drawLights();
       break;
     }
@@ -2249,25 +2323,28 @@ void updateLive() {
   if (millis() - last < 40) return;
   last = millis();
 
-  if (lightMode == "Sound Reactive" && lightsOn) {
-    if (micDetected && micLevel > 0) {
-      lvl     = max(micLevel / 1023.0f, lvl * 0.82f);
-      hueBase = (hueBase + 2) % 360;
-      live    = hsv((hueBase + (int)(lvl * 120)) % 360, 100, 12 + (int)(88 * lvl));
-      setAll(live);
-    } else {
-      lvl = 0;
-    }
-    // Refresh level bar if on lights page
-    if (page == P_LIGHTS && tftMode == M_SOUND) {
-      int py = BODY_Y + 100;
-      int bw = (int)(lvl * (SL_X1 - SL_X0));
-      tft.fillRect(SL_X0, py + 18, SL_X1 - SL_X0, 20, C_TRACK);
-      if (bw > 0) tft.fillRect(SL_X0, py + 18, bw, 20, c565(live));
-    }
+  // Only Sound Reactive may animate RGB. Basic stays white; Custom/Adaptive are steady.
+  if (lightMode != "Sound Reactive" || !lightsOn) {
+    lvl = 0;
+    return;
   }
 
+  if (micDetected && micLevel > 0) {
+    lvl     = max(micLevel / 1023.0f, lvl * 0.82f);
+    hueBase = (hueBase + 2) % 360;
+    live    = hsv((hueBase + (int)(lvl * 120)) % 360, 100, 12 + (int)(88 * lvl));
+    setAll(live);
+  } else {
+    lvl = 0;
   }
+  // Refresh level bar if on lights page
+  if (page == P_LIGHTS && tftMode == M_SOUND) {
+    int py = BODY_Y + 100;
+    int bw = (int)(lvl * (SL_X1 - SL_X0));
+    tft.fillRect(SL_X0, py + 18, SL_X1 - SL_X0, 20, C_TRACK);
+    if (bw > 0) tft.fillRect(SL_X0, py + 18, bw, 20, c565(live));
+  }
+}
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // AUDIO HELPERS
@@ -2481,12 +2558,12 @@ void onPress(int x, int y) {
           selectEncoderControl(ENC_CONTROL_LIGHT_MODE);
           if (tftMode != modes[i]) {
             tftMode = modes[i];
-            if (tftMode == M_BASIC)  { lightMode = "Basic";          setAll({255,255,255}); }
-            if (tftMode == M_COLOR)  { lightMode = "Colorful"; }
-            if (tftMode == M_SOUND)  { lightMode = "Sound Reactive"; }
-            if (tftMode == M_ADAPT)  { lightMode = "Color Adaptive"; }
+            if (tftMode == M_BASIC)  { lightMode = "Basic";          soundReactive = false; setAll({255,255,255}); }
+            if (tftMode == M_COLOR)  { lightMode = "Colorful";        soundReactive = false; pushZones(); }
+            if (tftMode == M_SOUND)  { lightMode = "Sound Reactive";  soundReactive = true;  pushZones(); }
+            if (tftMode == M_ADAPT)  { lightMode = "Color Adaptive";  soundReactive = false; pushZones(); }
             updateColorSensorScanForMode();
-            Serial.printf("[MODE] %s\n", lightMode.c_str());
+            Serial.printf("[MODE] %s → slave mode=%s\n", lightMode.c_str(), slaveModeTag());
             drawLights();
           } else {
             drawModeTabs();
@@ -2766,7 +2843,13 @@ void handleMode() {
     else                                     tftMode = M_BASIC;
 
     updateColorSensorScanForMode();
-    if (tftMode == M_BASIC) setAll({255, 255, 255});
+    // Push mode-correct RGB to the slave for every mode change.
+    if (tftMode == M_BASIC) {
+      soundReactive = false;          // stop any leftover sound-reactive flag
+      setAll({255, 255, 255});        // Basic → white only
+    } else {
+      pushZones();
+    }
     if (page == P_LIGHTS && gateState == GS_OPEN) drawLights();
   }
   jsonOk();
@@ -2774,6 +2857,19 @@ void handleMode() {
 
 // ── GET /api/color?r=&g=&b=&target=left|right|center|all ────────────────────
 void handleColor() {
+  // Basic = locked white. Sound/Adaptive own their output. Only Custom Color accepts picks.
+  if (lightMode == "Basic") {
+    Serial.println("[HTTP /api/color] Ignored — Basic mode is locked to white");
+    setAll({255, 255, 255});
+    jsonOk();
+    return;
+  }
+  if (lightMode != "Colorful") {
+    Serial.printf("[HTTP /api/color] Ignored — mode=%s (Custom Color only)\n", lightMode.c_str());
+    jsonOk();
+    return;
+  }
+
   uint8_t r = server.hasArg("r") ? constrain(server.arg("r").toInt(), 0, 255) : 255;
   uint8_t g = server.hasArg("g") ? constrain(server.arg("g").toInt(), 0, 255) : 180;
   uint8_t b = server.hasArg("b") ? constrain(server.arg("b").toInt(), 0, 255) : 90;
@@ -3585,6 +3681,9 @@ void loop() {
 
   // HTTP requests — handled on same core as loop (core 1)
   server.handleClient();
+
+  // Keep slave RGB in sync with current light mode (Basic white / Custom / Sound / Adaptive)
+  syncSlaveIfConnected();
 
   // Gate state machine (timed transitions)
   pollGate();

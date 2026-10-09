@@ -4,6 +4,13 @@
   Connects to the master ESP32 AP (Diorama-Park) as a WiFi station.
   Receives RGB commands via HTTP GET and drives 3 independent RGB LED groups.
 
+  The master always sends &mode= so this slave knows which light mode owns the
+  output and can apply the correct RGB:
+    Basic     → white (255,255,255)
+    Colorful  → custom RGB from master
+    Sound     → live RGB from master (sound-reactive)
+    Adaptive  → RGB from master with adaptive brightness
+
   ── Inverted PWM (MOSFET drive) ──────────────────────────────────────────────
     PWM 0   = full brightness (LED ON)
     PWM 255 = fully off
@@ -16,9 +23,9 @@
   Group 3  Inner Circle   : R=GPIO26, G=GPIO27, B=GPIO8
 
   ── API (master calls these) ─────────────────────────────────────────────────
-  GET /rgb?group=1|2|3|all&r=0-255&g=0-255&b=0-255&brightness=0-100
-  GET /off          → all LEDs off
-  GET /status       → JSON state
+  GET /rgb?group=1|2|3|all&r=0-255&g=0-255&b=0-255&brightness=0-100&mode=Basic|Colorful|Sound|Adaptive
+  GET /off?mode=... → all LEDs off
+  GET /status       → JSON state (includes mode)
 */
 
 #include <WiFi.h>
@@ -49,15 +56,46 @@ const IPAddress SUBNET_MASK (255, 255, 255,  0);
 
 // ── State ─────────────────────────────────────────────────────────────────────
 struct GroupState { uint8_t r, g, b, brightness; bool on; };
+// Default = Basic white until master syncs
 GroupState groups[3] = {
-  {255, 180, 90, 100, true},
-  {255, 180, 90, 100, true},
-  {255, 180, 90, 100, true},
+  {255, 255, 255, 100, true},
+  {255, 255, 255, 100, true},
+  {255, 255, 255, 100, true},
 };
+
+String lightMode = "Basic";  // Basic | Colorful | Sound | Adaptive
 
 WebServer server(80);
 unsigned long lastReconnectMs = 0;
 bool wasConnected = false;
+
+// ── Mode-aware RGB ────────────────────────────────────────────────────────────
+// Basic always outputs white. Other modes use the RGB the master sent.
+void resolveRgbForMode(uint8_t& r, uint8_t& g, uint8_t& b) {
+  if (lightMode == "Basic") {
+    r = 255;
+    g = 255;
+    b = 255;
+  }
+  // Colorful / Sound / Adaptive: keep the values the master provided
+}
+
+void setModeFromArg() {
+  if (!server.hasArg("mode")) return;
+  String m = server.arg("mode");
+  m.trim();
+  if (m.equalsIgnoreCase("Basic") ||
+      m.equalsIgnoreCase("Colorful") ||
+      m.equalsIgnoreCase("Sound") ||
+      m.equalsIgnoreCase("Adaptive")) {
+    lightMode = m;
+    // Normalize casing
+    if (m.equalsIgnoreCase("Basic"))     lightMode = "Basic";
+    if (m.equalsIgnoreCase("Colorful"))  lightMode = "Colorful";
+    if (m.equalsIgnoreCase("Sound"))     lightMode = "Sound";
+    if (m.equalsIgnoreCase("Adaptive"))  lightMode = "Adaptive";
+  }
+}
 
 // ── PWM helpers ───────────────────────────────────────────────────────────────
 // esp32 core 3.x uses analogWrite() directly — no ledcSetup/ledcAttachPin needed.
@@ -93,7 +131,7 @@ void addCORS() {
   server.sendHeader("Access-Control-Allow-Methods", "GET,OPTIONS");
 }
 
-// GET /rgb?group=1|2|3|all&r=0-255&g=0-255&b=0-255&brightness=0-100
+// GET /rgb?group=1|2|3|all&r=0-255&g=0-255&b=0-255&brightness=0-100&mode=Basic|Colorful|Sound|Adaptive
 void handleRGB() {
   addCORS();
   if (!server.hasArg("group")) {
@@ -101,17 +139,26 @@ void handleRGB() {
     return;
   }
 
+  setModeFromArg();
+
   uint8_t r  = server.hasArg("r")          ? constrain(server.arg("r").toInt(),          0, 255) : 255;
-  uint8_t g  = server.hasArg("g")          ? constrain(server.arg("g").toInt(),          0, 255) : 180;
-  uint8_t b  = server.hasArg("b")          ? constrain(server.arg("b").toInt(),          0, 255) : 90;
+  uint8_t g  = server.hasArg("g")          ? constrain(server.arg("g").toInt(),          0, 255) : 255;
+  uint8_t b  = server.hasArg("b")          ? constrain(server.arg("b").toInt(),          0, 255) : 255;
   uint8_t br = server.hasArg("brightness") ? constrain(server.arg("brightness").toInt(), 0, 100) : 100;
+
+  // Basic is always white — discard any non-white payload from the master.
+  resolveRgbForMode(r, g, b);
+  if (lightMode == "Basic") {
+    r = 255; g = 255; b = 255;
+  }
 
   String grp = server.arg("group");
   grp.toLowerCase();
 
   if (grp == "all") {
     for (int i = 0; i < 3; i++) { groups[i] = {r, g, b, br, true}; pushGroup(i); }
-    Serial.printf("[RGB] ALL  #%02X%02X%02X br=%d\n", r, g, b, br);
+    Serial.printf("[RGB] mode=%s ALL  #%02X%02X%02X br=%d\n",
+                  lightMode.c_str(), r, g, b, br);
   } else {
     int idx = grp.toInt() - 1;
     if (idx < 0 || idx > 2) {
@@ -120,32 +167,38 @@ void handleRGB() {
     }
     groups[idx] = {r, g, b, br, true};
     pushGroup(idx);
-    Serial.printf("[RGB] G%d  #%02X%02X%02X br=%d\n", idx + 1, r, g, b, br);
+    Serial.printf("[RGB] mode=%s G%d  #%02X%02X%02X br=%d\n",
+                  lightMode.c_str(), idx + 1, r, g, b, br);
   }
 
-  server.send(200, "application/json", "{\"ok\":true}");
+  char ok[96];
+  snprintf(ok, sizeof(ok), "{\"ok\":true,\"mode\":\"%s\",\"r\":%d,\"g\":%d,\"b\":%d}",
+           lightMode.c_str(), r, g, b);
+  server.send(200, "application/json", ok);
 }
 
-// GET /off
+// GET /off?mode=...
 void handleOff() {
   addCORS();
+  setModeFromArg();
   allOff();
-  Serial.println("[RGB] All OFF");
+  Serial.printf("[RGB] mode=%s All OFF\n", lightMode.c_str());
   server.send(200, "application/json", "{\"ok\":true}");
 }
 
 // GET /status
 void handleStatus() {
   addCORS();
-  char buf[512];
+  char buf[640];
   snprintf(buf, sizeof(buf),
-    "{\"connected\":true,\"ip\":\"%s\","
+    "{\"connected\":true,\"ip\":\"%s\",\"mode\":\"%s\","
     "\"groups\":["
     "{\"id\":1,\"r\":%d,\"g\":%d,\"b\":%d,\"brightness\":%d,\"on\":%s},"
     "{\"id\":2,\"r\":%d,\"g\":%d,\"b\":%d,\"brightness\":%d,\"on\":%s},"
     "{\"id\":3,\"r\":%d,\"g\":%d,\"b\":%d,\"brightness\":%d,\"on\":%s}"
     "]}",
     WiFi.localIP().toString().c_str(),
+    lightMode.c_str(),
     groups[0].r, groups[0].g, groups[0].b, groups[0].brightness, groups[0].on ? "true" : "false",
     groups[1].r, groups[1].g, groups[1].b, groups[1].brightness, groups[1].on ? "true" : "false",
     groups[2].r, groups[2].g, groups[2].b, groups[2].brightness, groups[2].on ? "true" : "false"
@@ -159,6 +212,7 @@ void setup() {
   Serial.begin(115200);
   delay(300);
   Serial.println("\n[SLAVE] Diorama RGB Slave starting...");
+  Serial.println("[SLAVE] Modes: Basic=white, Colorful/Sound/Adaptive=master RGB");
 
   // Set all LED pins as output and start fully OFF (inverted: 255 = off)
   uint8_t pins[] = {G1_R, G1_G, G1_B, G2_R, G2_G, G2_B, G3_R, G3_G, G3_B};
@@ -199,7 +253,9 @@ void loop() {
   if (connected && !wasConnected) {
     Serial.printf("[WiFi] Connected  IP: %s  RSSI: %d dBm\n",
                   WiFi.localIP().toString().c_str(), WiFi.RSSI());
-    pushAllGroups();  // apply initial state
+    Serial.printf("[SLAVE] Waiting for master sync (mode=%s)\n", lightMode.c_str());
+    // Stay off until master pushes — avoids showing stale color before sync
+    allOff();
   }
 
   if (!connected && (now - lastReconnectMs >= 10000)) {

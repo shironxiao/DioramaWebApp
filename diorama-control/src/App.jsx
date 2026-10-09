@@ -184,14 +184,21 @@ function App() {
       if (next.drainagePumpOn !== prev.drainagePumpOn) {
         sendDrainagePumpControl(next.drainagePumpOn);
       }
-      if (next.fountainColor !== prev.fountainColor) {
-        sendColorControl(next.fountainColor, 'left');
-      }
-      if (next.fountainAuxColor !== prev.fountainAuxColor) {
-        sendColorControl(next.fountainAuxColor, 'right');
-      }
+      // Mode first — Basic locks slave to white before any color traffic.
       if (next.lightingMode !== prev.lightingMode) {
         sendModeControl(next.lightingMode);
+      }
+      // Manual RGB only in Custom Color. Basic/Sound/Adaptive ignore color picks.
+      if (next.lightingMode === 'Colorful') {
+        if (next.fountainColor !== prev.fountainColor) {
+          sendColorControl(next.fountainColor, 'left');
+        }
+        if (next.fountainAuxColor !== prev.fountainAuxColor) {
+          sendColorControl(next.fountainAuxColor, 'right');
+        }
+        if (next.circleColor !== prev.circleColor) {
+          sendColorControl(next.circleColor, 'center');
+        }
       }
       if (next.volume !== prev.volume) {
         sendVolumeControl(next.volume);
