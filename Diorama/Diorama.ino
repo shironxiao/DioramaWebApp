@@ -14,14 +14,15 @@
                 AIN2/BIN2 -> GND, STBY -> 3V3. Use an external pump supply.
   SD/I2S      : Temporarily disabled; SD pin assignments need review before enabling.
   Mic         : GPIO 35  (ADC1 input-only analog; SD is disabled)
-  RGB LEDs    : red disabled (GPIO 4 is TFT reset), G=5, B=12
+  RGB LEDs    : driven by the slave ESP32; main forwards RGB/mode commands
   Shared I2C bus: ESP32 SDA=32, SCL=33 -> VEML7700 and PCA9685 SDA/SCL
   Color controller UART1: Nano TX -> ESP32 GPIO 34 (D34), 9600 baud
                          Level converter: HV=5V(Nano), HV1=Nano TX, HV-GND=Nano GND
                                           LV=3.3V(ESP32), LV1=GPIO34(D34), LV-GND=ESP32 GND
                          BOTH GND pins on the level converter must be connected!
   Color UART packet, one line at 9600 baud: JSON RGB or three RGB numbers
-  Fountain    : GPIO 2            (boot-strapping pin; hardware output not enabled)
+  Fountain pumps: TB6612FNG PWMA/PWMB <- GPIO 13 (shared PWM speed);
+                  AIN1/BIN1 -> 3.3V, AIN2/BIN2 -> GND, STBY -> 3.3V
   Fingerprint : RX2=16 ← sensor TX,  TX2=17 → sensor RX  (UART2)
   Gate actuator: not configured (GPIO 15 is the TFT chip-select pin)
 
@@ -122,8 +123,6 @@ struct FingerprintUser {
 
 constexpr bool SD_AUDIO_ENABLED = false;
 
-#define GREEN_PIN    5
-#define BLUE_PIN     12
 #define I2C_SDA_PIN 32  // Shared by the ambient sensor and PWM extender
 #define I2C_SCL_PIN 33
 #define COLOR_SENSOR_RX_PIN 34  // GPIO34 (D34) — UART1 RX from Nano via level converter
@@ -145,45 +144,16 @@ constexpr uint8_t PUMP_PWM_PIN = 13;
 #define USERS_FILE "/fingerprint_users.json"
 #define MAX_USERS 50
 
-// ── Motor Driver for Inner Circle (Reference from MotorDriverTest.ino) ────────
-// Motor A: IN1=GPIO13, IN2=GPIO14 | Motor B: IN3=GPIO16, IN4=GPIO17
-constexpr uint8_t MAIN_IN1_PIN = 13;
-constexpr uint8_t MAIN_IN2_PIN = 14;
-constexpr uint8_t MAIN_IN3_PIN = 16;
-constexpr uint8_t MAIN_IN4_PIN = 17;
-
-bool mainMotorHardwareEnabled = false; // Enabled if wired directly to Main ESP; Slave ESP32 drives dedicated pins
+// Inner-circle motion is physically driven by the slave ESP32.
 bool innerCircleMotorRunning = false;
 uint32_t lastSoundDetectedMs = 0;
 constexpr uint32_t SOUND_MOTOR_HOLD_MS = 600; // Keep rotating smoothly across audio pulses
 
 void stopMotors() {
-  if (mainMotorHardwareEnabled) {
-    digitalWrite(MAIN_IN1_PIN, LOW);
-    digitalWrite(MAIN_IN2_PIN, LOW);
-    digitalWrite(MAIN_IN3_PIN, LOW);
-    digitalWrite(MAIN_IN4_PIN, LOW);
-  }
   innerCircleMotorRunning = false;
 }
 
-void runMotorA(bool forward = true) {
-  if (mainMotorHardwareEnabled) {
-    digitalWrite(MAIN_IN1_PIN, forward ? HIGH : LOW);
-    digitalWrite(MAIN_IN2_PIN, forward ? LOW : HIGH);
-  }
-}
-
-void runMotorB(bool forward = true) {
-  if (mainMotorHardwareEnabled) {
-    digitalWrite(MAIN_IN3_PIN, forward ? HIGH : LOW);
-    digitalWrite(MAIN_IN4_PIN, forward ? LOW : HIGH);
-  }
-}
-
-void runInnerCircle(bool forward = true) {
-  runMotorA(forward);
-  runMotorB(forward);
+void runInnerCircle(bool = true) {
   innerCircleMotorRunning = true;
 }
 
@@ -486,10 +456,8 @@ void syncSlaveIfConnected() {
 // HARDWARE OUTPUT
 // ═══════════════════════════════════════════════════════════════════════════════
 
-// Push logical RGB zone colors to the inverted MOSFET PWM outputs.
-// All three zones share one RGB strip on current wiring → use zone[2] (center).
-// Basic mode is locked to white here so nothing (sensor, web color, leftover
-// sound-reactive zones) can keep changing the RGB while Basic is selected.
+// Push logical RGB zone colors to the slave ESP32.
+// Basic mode is locked to white so stale colors cannot override that mode.
 void pushZones() {
   if (lightMode == "Basic") {
     zone[0] = zone[1] = zone[2] = {255, 255, 255};
@@ -499,15 +467,8 @@ void pushZones() {
     zone[i].g = constrain(zone[i].g, 0, 255);
     zone[i].b = constrain(zone[i].b, 0, 255);
   }
-  if (lightsOn) {
-    analogWrite(GREEN_PIN, 255 - (zone[2].g * brightness / 100));
-    analogWrite(BLUE_PIN,  255 - (zone[2].b * brightness / 100));
-  } else {
-    analogWrite(GREEN_PIN, 255);
-    analogWrite(BLUE_PIN,  255);
-  }
 
-// ── Forward zones to slave ESP32 (throttled so SoftAP can still serve the web app)
+  // Forward zones to slave ESP32, throttled to keep the SoftAP responsive.
   const uint32_t nowSlave = millis();
   // Sound Reactive can request updates every ~40ms — cap slave HTTP to ~8/s
   if (lightMode == "Sound Reactive" && (nowSlave - lastSlavePushMs) < 120) return;
@@ -3665,8 +3626,6 @@ void setup() {
   Serial.println("[COLOR UART] Receive-only: accepts labeled/numeric RGB text or raw 3-byte RGB packets");
   setupAmbientSensor();
 
-  pinMode(GREEN_PIN, OUTPUT);
-  pinMode(BLUE_PIN, OUTPUT);
   stopMotors();
   pushZones();
 
