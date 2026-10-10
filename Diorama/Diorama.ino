@@ -242,13 +242,14 @@ int     hue = 36, sat = 46;
 bool    colorScanMode = true;
 
 // Fountain
+constexpr int MAX_FOUNTAIN_PWM = 215;
 bool    fountainOn  = false;
 int     fountainStr = 100;  // 0-100
 int     fountainAux = 100;  // Mirrors shared speed for compatibility with the UI state.
 bool    drainagePumpOn = false; // Software state only until a hardware pin is assigned.
 
 int fountainPumpDuty() {
-  return fountainOn ? fountainStr * 255 / 100 : 0;
+  return fountainOn ? fountainStr * MAX_FOUNTAIN_PWM / 100 : 0;
 }
 
 void applyFountainPumpOutput() {
