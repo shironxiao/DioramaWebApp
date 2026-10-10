@@ -1,7 +1,6 @@
-// Standalone ESP32 test for a dual H-bridge driver with IN1-IN4 inputs.
-// Motor A uses IN1/IN2; Motor B uses IN3/IN4.
-// For an L298N/L293D, enable ENA and ENB (jumpers or HIGH).
-// GPIO16/17 are also used by the main diorama sketch's fingerprint UART.
+// Standalone ESP32 test for a 28BYJ-48 stepper with a ULN2003 driver board.
+// Use these pins on the slave ESP32; GPIO16/17 are used by the main board's
+// fingerprint UART.
 
 constexpr uint8_t IN1_PIN = 13;
 constexpr uint8_t IN2_PIN = 14;
@@ -9,22 +8,48 @@ constexpr uint8_t IN3_PIN = 16;
 constexpr uint8_t IN4_PIN = 17;
 constexpr uint32_t RUN_TIME_MS = 2000;
 constexpr uint32_t PAUSE_MS = 1000;
+constexpr uint32_t STEP_INTERVAL_MS = 2;
+constexpr uint8_t MOTOR_PHASES[8][4] = {
+  {1, 0, 0, 0},
+  {1, 1, 0, 0},
+  {0, 1, 0, 0},
+  {0, 1, 1, 0},
+  {0, 0, 1, 0},
+  {0, 0, 1, 1},
+  {0, 0, 0, 1},
+  {1, 0, 0, 1},
+};
 
-void stopMotors() {
+uint8_t stepIndex = 0;
+
+void setPhase(uint8_t phase) {
+  digitalWrite(IN1_PIN, MOTOR_PHASES[phase][0] ? HIGH : LOW);
+  digitalWrite(IN2_PIN, MOTOR_PHASES[phase][1] ? HIGH : LOW);
+  digitalWrite(IN3_PIN, MOTOR_PHASES[phase][2] ? HIGH : LOW);
+  digitalWrite(IN4_PIN, MOTOR_PHASES[phase][3] ? HIGH : LOW);
+}
+
+void stopMotor() {
   digitalWrite(IN1_PIN, LOW);
   digitalWrite(IN2_PIN, LOW);
   digitalWrite(IN3_PIN, LOW);
   digitalWrite(IN4_PIN, LOW);
 }
 
-void runMotorA(bool forward) {
-  digitalWrite(IN1_PIN, forward ? HIGH : LOW);
-  digitalWrite(IN2_PIN, forward ? LOW : HIGH);
-}
+void runMotor(bool forward, uint32_t durationMs) {
+  const uint32_t startedAt = millis();
+  uint32_t lastStepAt = startedAt;
 
-void runMotorB(bool forward) {
-  digitalWrite(IN3_PIN, forward ? HIGH : LOW);
-  digitalWrite(IN4_PIN, forward ? LOW : HIGH);
+  while (millis() - startedAt < durationMs) {
+    const uint32_t now = millis();
+    if (now - lastStepAt >= STEP_INTERVAL_MS) {
+      stepIndex = forward ? (stepIndex + 1) % 8 : (stepIndex + 7) % 8;
+      setPhase(stepIndex);
+      lastStepAt = now;
+    }
+    delay(1);
+  }
+  stopMotor();
 }
 
 void setup() {
@@ -34,37 +59,18 @@ void setup() {
   pinMode(IN2_PIN, OUTPUT);
   pinMode(IN3_PIN, OUTPUT);
   pinMode(IN4_PIN, OUTPUT);
-  stopMotors();
+  stopMotor();
 
-  Serial.println("Dual DC motor driver test ready.");
-  Serial.println("Motor A: IN1=GPIO13, IN2=GPIO14");
-  Serial.println("Motor B: IN3=GPIO16, IN4=GPIO17");
-  Serial.println("Each motor runs forward, stops, then reverses.");
-  Serial.println("Ensure the driver's enable inputs are enabled.");
+  Serial.println("28BYJ-48 + ULN2003 stepper test ready.");
+  Serial.println("Inputs: IN1=GPIO13, IN2=GPIO14, IN3=GPIO16, IN4=GPIO17");
 }
 
 void loop() {
-  Serial.println("Motor A forward");
-  runMotorA(true);
-  delay(RUN_TIME_MS);
-  stopMotors();
+  Serial.println("Stepper forward");
+  runMotor(true, RUN_TIME_MS);
   delay(PAUSE_MS);
 
-  Serial.println("Motor A reverse");
-  runMotorA(false);
-  delay(RUN_TIME_MS);
-  stopMotors();
-  delay(PAUSE_MS);
-
-  Serial.println("Motor B forward");
-  runMotorB(true);
-  delay(RUN_TIME_MS);
-  stopMotors();
-  delay(PAUSE_MS);
-
-  Serial.println("Motor B reverse");
-  runMotorB(false);
-  delay(RUN_TIME_MS);
-  stopMotors();
+  Serial.println("Stepper reverse");
+  runMotor(false, RUN_TIME_MS);
   delay(PAUSE_MS);
 }

@@ -1,35 +1,10 @@
-import React, { useState } from 'react';
+import React from 'react';
 import { Waves, Droplet } from 'lucide-react';
 import DioramaCanvas from '../../components/DioramaCanvas';
 import './Fountain.css';
 
 export default function Fountain({ appState, setAppState, showToast }) {
   const { fountainOn, fountainStrength, fountainAuxStrength, fountainForceSensorOn, fountainPattern, fountainColor } = appState;
-  const [strengthTarget, setStrengthTarget] = useState('both'); // 'both', 'left', 'right'
-  const [sliderValue, setSliderValue] = useState(fountainStrength);
-
-  // Apply Strength to Target Handler
-  const applyStrengthToTarget = (target) => {
-    setAppState((prev) => {
-      const next = { ...prev };
-      if (target === 'both') {
-        next.fountainStrength = sliderValue;
-        next.fountainAuxStrength = sliderValue;
-      } else if (target === 'left') {
-        next.fountainStrength = sliderValue;
-      } else if (target === 'right') {
-        next.fountainAuxStrength = sliderValue;
-      }
-      return next;
-    });
-    if (target === 'both') {
-      showToast(`✨ Applied ${sliderValue}% water strength to BOTH fountains!`);
-    } else if (target === 'left') {
-      showToast(`✨ Applied ${sliderValue}% water strength to Left Fountain!`);
-    } else if (target === 'right') {
-      showToast(`✨ Applied ${sliderValue}% water strength to Right Fountain!`);
-    }
-  };
 
   return (
     <div className="page-container">
@@ -58,7 +33,7 @@ export default function Fountain({ appState, setAppState, showToast }) {
         onGateClick={() => showToast('✨ Diorama Gate Tapped!')}
       />
 
-      {/* Water Strength Card with target selection + Force Sensor */}
+      {/* Shared pump speed */}
       <div className="control-card">
         <div className="card-header">
           <div className="card-title-group">
@@ -66,21 +41,17 @@ export default function Fountain({ appState, setAppState, showToast }) {
               <Droplet size={22} />
             </div>
             <div className="title-stack">
-              <h3 className="card-title">Water strength</h3>
+              <h3 className="card-title">Shared pump speed</h3>
               <span className="card-status-subtext">
                 {fountainForceSensorOn
                   ? 'Driven by Force Sensor'
-                  : `Active: ${strengthTarget === 'both' ? 'Both Fountains' : strengthTarget === 'left' ? 'Left Fountain' : 'Right Fountain'}`}
+                  : 'Both pumps run together'}
               </span>
             </div>
           </div>
           <div className="strength-value-label">
             <span className="font-bold text-lg">
-              {strengthTarget === 'both'
-                ? `${fountainStrength}% / ${fountainAuxStrength}%`
-                : strengthTarget === 'left'
-                ? `${fountainStrength}%`
-                : `${fountainAuxStrength}%`}
+              {fountainStrength}%
             </span>
           </div>
         </div>
@@ -91,75 +62,20 @@ export default function Fountain({ appState, setAppState, showToast }) {
             type="range"
             min="0"
             max="100"
-            value={
-              strengthTarget === 'both'
-                ? sliderValue
-                : strengthTarget === 'left'
-                ? fountainStrength
-                : fountainAuxStrength
-            }
+            value={fountainStrength}
             disabled={fountainForceSensorOn}
             className="custom-range-slider teal-range"
             onChange={(e) => {
               const val = Number(e.target.value);
-              setSliderValue(val);
-              setAppState((prev) => {
-                const next = { ...prev };
-                if (strengthTarget === 'both') {
-                  next.fountainStrength = val;
-                  next.fountainAuxStrength = val;
-                } else if (strengthTarget === 'left') {
-                  next.fountainStrength = val;
-                } else if (strengthTarget === 'right') {
-                  next.fountainAuxStrength = val;
-                }
-                return next;
-              });
+              setAppState((prev) => ({
+                ...prev,
+                fountainStrength: val,
+                fountainAuxStrength: val
+              }));
             }}
           />
         </div>
-
-        {/* Target Selection & Apply Buttons */}
-        <div className="apply-targets-section mt-3">
-          <span className="apply-targets-header">APPLY STRENGTH TO:</span>
-          <div className="apply-targets-grid">
-            <button
-              type="button"
-              className={`btn-target-apply ${strengthTarget === 'both' ? 'active-target-btn' : ''}`}
-              onClick={() => {
-                setStrengthTarget('both');
-                applyStrengthToTarget('both');
-              }}
-            >
-              <span className="target-title">Both Fountains</span>
-              <span className="target-sub">{fountainStrength}% &amp; {fountainAuxStrength}%</span>
-            </button>
-
-            <button
-              type="button"
-              className={`btn-target-apply ${strengthTarget === 'left' ? 'active-target-btn' : ''}`}
-              onClick={() => {
-                setStrengthTarget('left');
-                applyStrengthToTarget('left');
-              }}
-            >
-              <span className="target-title">Left Fountain</span>
-              <span className="target-sub">{fountainStrength}%</span>
-            </button>
-
-            <button
-              type="button"
-              className={`btn-target-apply ${strengthTarget === 'right' ? 'active-target-btn' : ''}`}
-              onClick={() => {
-                setStrengthTarget('right');
-                applyStrengthToTarget('right');
-              }}
-            >
-              <span className="target-title">Right Fountain</span>
-              <span className="target-sub">{fountainAuxStrength}%</span>
-            </button>
-          </div>
-        </div>
+        <p className="text-xs text-muted mt-2">One speed setting is shared by both TB6612FNG pump channels.</p>
 
         {/* Force Sensor Toggle Row */}
         <div className="card-footer-row border-t pt-3 mt-3">

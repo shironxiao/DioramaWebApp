@@ -1,21 +1,29 @@
 /*
-  Diorama Slave ESP32 — RGB Light Controller
+  Diorama Slave ESP32 — RGB Light & Inner Circle Motor Controller
   ─────────────────────────────────────────────────────────────────────────────
   Connects to the master ESP32 AP (Diorama-Park) as a WiFi station.
-  Master sends mode + RGB; this board only drives the MOSFET PWM outputs.
+  Master sends mode + RGB + sound detection state; this board drives:
+  1. MOSFET PWM outputs for 3 RGB zones (Left, Right, Inner Circle)
+  2. ULN2003 stepper driver (IN1-IN4) for Inner Circle rotation on sound detection
 
   ── IMPORTANT (classic ESP32) ────────────────────────────────────────────────
   Do NOT use GPIO 6–11. They are wired to internal SPI flash.
-  The old sketch used GPIO 6, 7, 8 → boot loop → master said "Unreachable".
 
-  ── Safe wiring (rewire if you still had 6/7/8) ───────────────────────────────
+  ── Safe wiring ──────────────────────────────────────────────────────────────
   Group 1  Left Fountain  : R=GPIO4,  G=GPIO5,  B=GPIO18
-  Group 2  Right Fountain : R=GPIO19, G=GPIO22, B=GPIO25
-  Group 3  Inner Circle   : R=GPIO26, G=GPIO27, B=GPIO23
+  Group 2  Right Fountain : R=GPIO19, G=GPIO22, B=GPIO32
+  Group 3  Inner Circle   : R=GPIO33, G=GPIO27, B=GPIO23
+
+  ── PAM8403 analog audio input ───────────────────────────────────────────────
+  DAC2=GPIO25 -> Right channel input, DAC1=GPIO26 -> Left channel input
+
+  ── Motor Driver (ULN2003 + 28BYJ-48) ────────────────────────────────────────
+  Stepper inputs: IN1=GPIO13, IN2=GPIO14, IN3=GPIO16, IN4=GPIO17
 
   ── API (master calls these) ─────────────────────────────────────────────────
-  GET /rgb?group=1|2|3|all&r=&g=&b=&brightness=&mode=Basic|Colorful|Sound|Adaptive
+  GET /rgb?group=1|2|3|all&r=&g=&b=&brightness=&mode=Basic|Colorful|Sound|Adaptive&sound=0|1
   GET /off?mode=...
+  GET /motor?state=on|off&dir=fwd|rev
   GET /status
 */
 
@@ -35,15 +43,40 @@ const IPAddress DNS_IP      (192, 168, 4,   1);
 // Group 1: Left Fountain
 #define G1_R  4
 #define G1_G  5
-#define G1_B  18   // was 6  — FLASH PIN, caused reboot loop
+#define G1_B  18
 // Group 2: Right Fountain
-#define G2_R  19   // was 7  — FLASH PIN, caused reboot loop
+#define G2_R  19
 #define G2_G  22
-#define G2_B  25
+#define G2_B  32
 // Group 3: Inner Circle
-#define G3_R  26
+#define G3_R  33
 #define G3_G  27
-#define G3_B  23   // was 8  — FLASH PIN, caused reboot loop
+#define G3_B  23
+
+// ── ULN2003 / 28BYJ-48 stepper input pins ─────────────────────────────────────
+constexpr uint8_t IN1_PIN = 13;
+constexpr uint8_t IN2_PIN = 14;
+constexpr uint8_t IN3_PIN = 16;
+constexpr uint8_t IN4_PIN = 17;
+
+bool innerCircleMotorRunning = false;
+bool manualMotorRunning = false;
+bool motorForward = true;
+uint8_t motorStepIndex = 0;
+unsigned long lastMotorStepMs = 0;
+constexpr unsigned long MOTOR_STEP_INTERVAL_MS = 2;
+constexpr uint8_t MOTOR_PHASES[8][4] = {
+  {1, 0, 0, 0},
+  {1, 1, 0, 0},
+  {0, 1, 0, 0},
+  {0, 1, 1, 0},
+  {0, 0, 1, 0},
+  {0, 0, 1, 1},
+  {0, 0, 0, 1},
+  {1, 0, 0, 1},
+};
+unsigned long lastSoundDetectedMs = 0;
+constexpr unsigned long SOUND_MOTOR_HOLD_MS = 600; // Hold motor briefly across audio pulses for smooth rotation
 
 struct GroupState { uint8_t r, g, b, brightness; bool on; };
 GroupState groups[3] = {
@@ -59,6 +92,42 @@ unsigned long lastReconnectMs = 0;
 unsigned long lastStatusMs    = 0;
 bool wasConnected = false;
 bool httpStarted  = false;
+
+// ── Motor Control Functions ───────────────────────────────────────────────────
+void writeMotorPhase() {
+  digitalWrite(IN1_PIN, MOTOR_PHASES[motorStepIndex][0] ? HIGH : LOW);
+  digitalWrite(IN2_PIN, MOTOR_PHASES[motorStepIndex][1] ? HIGH : LOW);
+  digitalWrite(IN3_PIN, MOTOR_PHASES[motorStepIndex][2] ? HIGH : LOW);
+  digitalWrite(IN4_PIN, MOTOR_PHASES[motorStepIndex][3] ? HIGH : LOW);
+}
+
+void stopMotors() {
+  digitalWrite(IN1_PIN, LOW);
+  digitalWrite(IN2_PIN, LOW);
+  digitalWrite(IN3_PIN, LOW);
+  digitalWrite(IN4_PIN, LOW);
+  innerCircleMotorRunning = false;
+  manualMotorRunning = false;
+}
+
+void runInnerCircle(bool forward = true) {
+  motorForward = forward;
+  if (!innerCircleMotorRunning) {
+    writeMotorPhase();
+    lastMotorStepMs = millis();
+  }
+  innerCircleMotorRunning = true;
+}
+
+void serviceInnerCircleMotor(unsigned long now) {
+  if (!innerCircleMotorRunning || now - lastMotorStepMs < MOTOR_STEP_INTERVAL_MS) return;
+
+  motorStepIndex = motorForward
+    ? (motorStepIndex + 1) % 8
+    : (motorStepIndex + 7) % 8;
+  writeMotorPhase();
+  lastMotorStepMs = now;
+}
 
 void resolveRgbForMode(uint8_t& r, uint8_t& g, uint8_t& b) {
   if (lightMode == "Basic") {
@@ -76,6 +145,11 @@ void setModeFromArg() {
   else if (m.equalsIgnoreCase("Colorful"))  lightMode = "Colorful";
   else if (m.equalsIgnoreCase("Sound"))     lightMode = "Sound";
   else if (m.equalsIgnoreCase("Adaptive"))  lightMode = "Adaptive";
+
+  if (lightMode != "Sound") {
+    lastSoundDetectedMs = 0;
+    if (innerCircleMotorRunning && !manualMotorRunning) stopMotors();
+  }
 }
 
 void writeRGB(uint8_t pinR, uint8_t pinG, uint8_t pinB,
@@ -126,6 +200,15 @@ void handleRGB() {
 
   resolveRgbForMode(r, g, b);
 
+  bool soundParam = false;
+  if (server.hasArg("sound")) {
+    String s = server.arg("sound");
+    soundParam = (s == "1" || s.equalsIgnoreCase("true") || s.equalsIgnoreCase("on"));
+  }
+  if (lightMode == "Sound" && soundParam) {
+    lastSoundDetectedMs = millis();
+  }
+
   String grp = server.arg("group");
   grp.toLowerCase();
 
@@ -134,7 +217,8 @@ void handleRGB() {
       groups[i] = {r, g, b, br, true};
       pushGroup(i);
     }
-    Serial.printf("[RGB] mode=%s ALL #%02X%02X%02X br=%d\n", lightMode.c_str(), r, g, b, br);
+    Serial.printf("[RGB] mode=%s ALL #%02X%02X%02X br=%d sound=%d\n",
+                  lightMode.c_str(), r, g, b, br, soundParam ? 1 : 0);
   } else {
     int idx = grp.toInt() - 1;
     if (idx < 0 || idx > 2) {
@@ -143,13 +227,15 @@ void handleRGB() {
     }
     groups[idx] = {r, g, b, br, true};
     pushGroup(idx);
-    Serial.printf("[RGB] mode=%s G%d #%02X%02X%02X br=%d\n", lightMode.c_str(), idx + 1, r, g, b, br);
+    Serial.printf("[RGB] mode=%s G%d #%02X%02X%02X br=%d sound=%d\n",
+                  lightMode.c_str(), idx + 1, r, g, b, br, soundParam ? 1 : 0);
   }
 
-  char ok[128];
+  char ok[160];
   snprintf(ok, sizeof(ok),
-           "{\"ok\":true,\"mode\":\"%s\",\"r\":%d,\"g\":%d,\"b\":%d,\"ip\":\"%s\"}",
-           lightMode.c_str(), r, g, b, WiFi.localIP().toString().c_str());
+           "{\"ok\":true,\"mode\":\"%s\",\"r\":%d,\"g\":%d,\"b\":%d,\"ip\":\"%s\",\"motor\":%s}",
+           lightMode.c_str(), r, g, b, WiFi.localIP().toString().c_str(),
+           innerCircleMotorRunning ? "true" : "false");
   server.send(200, "application/json", ok);
 }
 
@@ -157,15 +243,38 @@ void handleOff() {
   addCORS();
   setModeFromArg();
   allOff();
+  stopMotors();
+  lastSoundDetectedMs = 0;
   Serial.printf("[RGB] mode=%s All OFF\n", lightMode.c_str());
-  server.send(200, "application/json", "{\"ok\":true}");
+  server.send(200, "application/json", "{\"ok\":true,\"motor\":false}");
+}
+
+void handleMotor() {
+  addCORS();
+  if (server.hasArg("state")) {
+    String st = server.arg("state");
+    bool fwd = server.hasArg("dir") ? (!server.arg("dir").equalsIgnoreCase("rev")) : true;
+    if (st.equalsIgnoreCase("on") || st.equalsIgnoreCase("run") || st == "1") {
+      manualMotorRunning = true;
+      runInnerCircle(fwd);
+      Serial.println("[MOTOR] Manual RUN");
+    } else {
+      stopMotors();
+      lastSoundDetectedMs = 0;
+      Serial.println("[MOTOR] Manual STOP");
+    }
+  }
+  char buf[128];
+  snprintf(buf, sizeof(buf), "{\"ok\":true,\"motorRunning\":%s}", innerCircleMotorRunning ? "true" : "false");
+  server.send(200, "application/json", buf);
 }
 
 void handleStatus() {
   addCORS();
-  char buf[640];
+  char buf[720];
   snprintf(buf, sizeof(buf),
     "{\"connected\":%s,\"ip\":\"%s\",\"mode\":\"%s\",\"ssid\":\"%s\","
+    "\"motorRunning\":%s,"
     "\"groups\":["
     "{\"id\":1,\"r\":%d,\"g\":%d,\"b\":%d,\"brightness\":%d,\"on\":%s},"
     "{\"id\":2,\"r\":%d,\"g\":%d,\"b\":%d,\"brightness\":%d,\"on\":%s},"
@@ -175,6 +284,7 @@ void handleStatus() {
     WiFi.localIP().toString().c_str(),
     lightMode.c_str(),
     WIFI_SSID,
+    innerCircleMotorRunning ? "true" : "false",
     groups[0].r, groups[0].g, groups[0].b, groups[0].brightness, groups[0].on ? "true" : "false",
     groups[1].r, groups[1].g, groups[1].b, groups[1].brightness, groups[1].on ? "true" : "false",
     groups[2].r, groups[2].g, groups[2].b, groups[2].brightness, groups[2].on ? "true" : "false"
@@ -186,13 +296,15 @@ void startHttpServer() {
   if (httpStarted) return;
   server.on("/",       HTTP_GET,     []() {
     addCORS();
-    server.send(200, "text/plain", "Diorama Slave RGB Controller");
+    server.send(200, "text/plain", "Diorama Slave RGB & Motor Controller");
   });
   server.on("/rgb",    HTTP_GET,     handleRGB);
   server.on("/off",    HTTP_GET,     handleOff);
+  server.on("/motor",  HTTP_GET,     handleMotor);
   server.on("/status", HTTP_GET,     handleStatus);
   server.on("/rgb",    HTTP_OPTIONS, []() { addCORS(); server.send(204); });
   server.on("/off",    HTTP_OPTIONS, []() { addCORS(); server.send(204); });
+  server.on("/motor",  HTTP_OPTIONS, []() { addCORS(); server.send(204); });
   server.on("/status", HTTP_OPTIONS, []() { addCORS(); server.send(204); });
   server.begin();
   httpStarted = true;
@@ -223,9 +335,10 @@ void setup() {
   Serial.begin(115200);
   delay(500);
   Serial.println();
-  Serial.println("[SLAVE] Diorama RGB Slave starting...");
-  Serial.println("[SLAVE] Safe pins: G1=4/5/18  G2=19/22/25  G3=26/27/23");
-  Serial.println("[SLAVE] (GPIO 6/7/8 removed — those crash classic ESP32)");
+  Serial.println("[SLAVE] Diorama RGB & Inner Circle Motor Slave starting...");
+  Serial.println("[SLAVE] RGB pins: G1=4/5/18  G2=19/22/32  G3=33/27/23");
+  Serial.println("[AUDIO] GPIO25/26 freed for PAM8403 analog inputs; playback not implemented");
+  Serial.println("[SLAVE] Motor pins: IN1=13, IN2=14, IN3=16, IN4=17");
 
   // Init PWM pins OFF (inverted)
   const uint8_t pins[] = {G1_R, G1_G, G1_B, G2_R, G2_G, G2_B, G3_R, G3_G, G3_B};
@@ -235,6 +348,14 @@ void setup() {
   }
   Serial.println("[PWM] 9 safe pins ready, all OFF");
 
+  // Init Motor Pins OFF
+  pinMode(IN1_PIN, OUTPUT);
+  pinMode(IN2_PIN, OUTPUT);
+  pinMode(IN3_PIN, OUTPUT);
+  pinMode(IN4_PIN, OUTPUT);
+  stopMotors();
+  Serial.println("[MOTOR] ULN2003 stepper outputs ready, all OFF");
+
   connectWifi();
 }
 
@@ -243,6 +364,22 @@ void loop() {
 
   const bool connected = (WiFi.status() == WL_CONNECTED);
   const unsigned long now = millis();
+
+  // ── Inner circle sound-reactive rotation ─────────────────────────
+  if (!manualMotorRunning && lightMode == "Sound" &&
+      lastSoundDetectedMs != 0 && now - lastSoundDetectedMs < SOUND_MOTOR_HOLD_MS) {
+    if (!innerCircleMotorRunning) {
+      runInnerCircle(true);
+      Serial.println("[MOTOR] Sound detected -> Inner Circle rotating");
+    }
+  } else if (!manualMotorRunning && innerCircleMotorRunning) {
+    if (lightMode != "Sound" || lastSoundDetectedMs == 0 ||
+        now - lastSoundDetectedMs >= SOUND_MOTOR_HOLD_MS) {
+      stopMotors();
+      Serial.println("[MOTOR] Sound paused -> Inner Circle stopped");
+    }
+  }
+  serviceInnerCircleMotor(now);
 
   if (connected && !wasConnected) {
     Serial.printf("[WiFi] Connected  IP=%s  gateway=%s  RSSI=%d\n",
@@ -257,12 +394,14 @@ void loop() {
 
     startHttpServer();
     allOff();
+    stopMotors();
     Serial.println("[SLAVE] Ready — waiting for master /rgb commands");
   }
 
   if (!connected) {
     if (wasConnected) {
       Serial.println("[WiFi] Lost connection to Diorama-Park");
+      stopMotors();
     }
     // Reconnect every 5s (not disconnect/begin every loop)
     if (now - lastReconnectMs >= 5000) {
@@ -274,9 +413,10 @@ void loop() {
     }
   } else if (now - lastStatusMs >= 15000) {
     lastStatusMs = now;
-    Serial.printf("[SLAVE] OK ip=%s mode=%s rssi=%d\n",
+    Serial.printf("[SLAVE] OK ip=%s mode=%s motor=%s rssi=%d\n",
                   WiFi.localIP().toString().c_str(),
                   lightMode.c_str(),
+                  innerCircleMotorRunning ? "ON" : "OFF",
                   WiFi.RSSI());
   }
 

@@ -53,7 +53,7 @@ function App() {
 
     fountainOn: true,
     fountainStrength: 100,
-    fountainAuxStrength: 75,
+    fountainAuxStrength: 100,
     fountainForceSensorOn: false,
     drainagePumpOn: false,
 
@@ -188,16 +188,28 @@ function App() {
       if (next.lightingMode !== prev.lightingMode) {
         sendModeControl(next.lightingMode);
       }
-      // Manual RGB only in Custom Color. Basic/Sound/Adaptive ignore color picks.
+      // Custom Color mirrors the automatic sensor scan across every zone.
       if (next.lightingMode === 'Colorful') {
-        if (next.fountainColor !== prev.fountainColor) {
-          sendColorControl(next.fountainColor, 'left');
-        }
-        if (next.fountainAuxColor !== prev.fountainAuxColor) {
-          sendColorControl(next.fountainAuxColor, 'right');
-        }
-        if (next.circleColor !== prev.circleColor) {
-          sendColorControl(next.circleColor, 'center');
+        const colorChanged =
+          next.fountainColor !== prev.fountainColor ||
+          next.fountainAuxColor !== prev.fountainAuxColor ||
+          next.circleColor !== prev.circleColor;
+        const allZonesMatch =
+          next.fountainColor === next.fountainAuxColor &&
+          next.fountainColor === next.circleColor;
+
+        if (colorChanged && allZonesMatch) {
+          sendColorControl(next.fountainColor, 'all');
+        } else {
+          if (next.fountainColor !== prev.fountainColor) {
+            sendColorControl(next.fountainColor, 'left');
+          }
+          if (next.fountainAuxColor !== prev.fountainAuxColor) {
+            sendColorControl(next.fountainAuxColor, 'right');
+          }
+          if (next.circleColor !== prev.circleColor) {
+            sendColorControl(next.circleColor, 'center');
+          }
         }
       }
       if (next.volume !== prev.volume) {

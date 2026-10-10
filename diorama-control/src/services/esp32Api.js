@@ -73,6 +73,12 @@ export const sendColorControl = (hexColor, target = 'left') => {
   return sendEspCommand('/api/color', { r, g, b, target });
 };
 
+export const sendColorScanMode = (scanEnabled) => {
+  return sendEspCommand('/api/color/source', {
+    mode: scanEnabled ? 'scan' : 'picker'
+  });
+};
+
 export const triggerColorScan = async () => {
   const isSelfHosted = window.location.hostname === esp32Ip || (window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1');
   const url = isSelfHosted ? '/api/color/scan' : `http://${esp32Ip}/api/color/scan`;
@@ -120,6 +126,13 @@ export const sendForceSensorControl = (isOn) => {
 
 export const sendControlSource = (source) => {
   return sendEspCommand('/api/control-source', { source });
+};
+
+export const sendMotorControl = (isOn, dir = 'fwd') => {
+  return sendEspCommand('/api/motor', {
+    state: isOn ? 'on' : 'off',
+    dir
+  });
 };
 
 /**

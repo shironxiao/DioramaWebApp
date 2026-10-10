@@ -1,17 +1,14 @@
-import React, { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   Lightbulb,
   Mic,
   Palette,
   Sun,
-  ChevronDown,
-  ChevronUp,
-  Check,
-  Scan
+  Check
 } from 'lucide-react';
 import DioramaCanvas from '../../components/DioramaCanvas';
 import ColorPicker from '../../components/ColorPicker';
-import { getLiveSensors, triggerColorScan } from '../../services/esp32Api';
+import { getLiveSensors, sendColorScanMode } from '../../services/esp32Api';
 import './Light&Color.css';
 
 const LIGHTING_MODES = [
@@ -24,7 +21,7 @@ const LIGHTING_MODES = [
   {
     id: 'Colorful',
     name: 'Custom Color',
-    desc: 'Choose steady colors for individual lighting zones',
+    desc: 'Use the color sensor or choose a color with the hue picker',
     icon: Palette
   },
   {
@@ -41,18 +38,37 @@ const LIGHTING_MODES = [
   }
 ];
 
+const rgbToHex = (r, g, b) => {
+  const c = value => Math.max(0, Math.min(255, value)).toString(16).padStart(2, '0');
+  return `#${c(r)}${c(g)}${c(b)}`;
+};
+
+const hexToRgb = (hex) => {
+  const value = Number.parseInt((hex || '#D4B78C').replace('#', ''), 16);
+  return { r: (value >> 16) & 255, g: (value >> 8) & 255, b: value & 255 };
+};
+
 export default function LightAndColor({ appState, setAppState, showToast }) {
   const {
     lightsOn, brightness, lightingMode, soundReactiveOn,
-    reactionIntensity, circleColor, fountainColor, fountainAuxColor, autoDimming
+    reactionIntensity, circleColor, fountainColor, autoDimming
   } = appState;
   const isColorAdaptive = lightingMode === 'Color Adaptive';
 
   const [currentColor, setCurrentColor] = useState(circleColor || '#D4B78C');
-  const [isColorsOpen, setIsColorsOpen] = useState(false);
   const [ambientTelemetry, setAmbientTelemetry] = useState({ connected: false, lux: null, brightness: null });
   const [colorTelemetry, setColorTelemetry] = useState({ connected: false, scanning: false, r: 255, g: 255, b: 255 });
-  const isCustomColor = lightingMode === 'Colorful';
+  const [colorScanMode, setColorScanMode] = useState(true);
+  const [sourceChanging, setSourceChanging] = useState(false);
+  const lightingModeRef = useRef(lightingMode);
+  const colorScanModeRef = useRef(colorScanMode);
+  const setAppStateRef = useRef(setAppState);
+
+  useEffect(() => {
+    lightingModeRef.current = lightingMode;
+    colorScanModeRef.current = colorScanMode;
+    setAppStateRef.current = setAppState;
+  }, [lightingMode, colorScanMode, setAppState]);
 
   useEffect(() => {
     let active = true;
@@ -60,7 +76,32 @@ export default function LightAndColor({ appState, setAppState, showToast }) {
       const data = await getLiveSensors();
       if (active && data) {
         if (data.ambientLight) setAmbientTelemetry(data.ambientLight);
-        if (data.colorSensor) setColorTelemetry(data.colorSensor);
+        if (data.colorSensor) {
+          setColorTelemetry(data.colorSensor);
+          const scanMode = data.colorSensor.scanMode
+            ? data.colorSensor.scanMode === 'scan'
+            : colorScanModeRef.current;
+          colorScanModeRef.current = scanMode;
+          setColorScanMode(scanMode);
+          if (lightingModeRef.current === 'Colorful' && scanMode && data.colorSensor.connected) {
+            const scannedColor = rgbToHex(data.colorSensor.r, data.colorSensor.g, data.colorSensor.b);
+            setCurrentColor(scannedColor);
+            setAppStateRef.current((prev) => {
+              if (
+                prev.circleColor === scannedColor &&
+                prev.fountainColor === scannedColor &&
+                prev.fountainAuxColor === scannedColor
+              ) return prev;
+
+              return {
+                ...prev,
+                circleColor: scannedColor,
+                fountainColor: scannedColor,
+                fountainAuxColor: scannedColor
+              };
+            });
+          }
+        }
       }
     };
     refreshSensors();
@@ -71,51 +112,44 @@ export default function LightAndColor({ appState, setAppState, showToast }) {
     };
   }, []);
 
-  // Helper for color conversions
-  const hexToRgb = (hex) => {
-    const h = (hex || '#D4B78C').replace('#', '');
-    const n = parseInt(h, 16);
-    return { r: (n >> 16) & 255, g: (n >> 8) & 255, b: n & 255 };
-  };
-  const rgbToHex = (r, g, b) => {
-    const c = v => Math.max(0, Math.min(255, v)).toString(16).padStart(2, '0');
-    return `#${c(r)}${c(g)}${c(b)}`;
-  };
-
-  const activeRgb = hexToRgb(currentColor);
   const activeModeName = LIGHTING_MODES.find((mode) => mode.id === lightingMode)?.name || lightingMode;
 
-  const handlePickerChange = (newRgb) => {
-    setCurrentColor(rgbToHex(newRgb.r, newRgb.g, newRgb.b));
-  };
-
-  // Trigger manual Color Scan from hardware color sensor
-  const handleScanSensorColor = async () => {
+  const handleColorSourceChange = async (scanEnabled) => {
+    if (sourceChanging || scanEnabled === colorScanModeRef.current) return;
+    setSourceChanging(true);
     try {
-      const res = await triggerColorScan();
-      let scannedHex = null;
-      if (res && res.hex) {
-        scannedHex = res.hex;
-      } else if (colorTelemetry.connected) {
-        scannedHex = rgbToHex(colorTelemetry.r, colorTelemetry.g, colorTelemetry.b);
+      const updated = await sendColorScanMode(scanEnabled);
+      if (!updated) {
+        showToast('Could not change the color source. Check the ESP32 connection.');
+        return;
       }
 
-      if (scannedHex) {
-        setCurrentColor(scannedHex);
+      colorScanModeRef.current = scanEnabled;
+      setColorScanMode(scanEnabled);
+      if (scanEnabled && colorTelemetry.connected) {
+        const scannedColor = rgbToHex(colorTelemetry.r, colorTelemetry.g, colorTelemetry.b);
+        setCurrentColor(scannedColor);
         setAppState((prev) => ({
           ...prev,
-          circleColor: scannedHex,
-          fountainColor: scannedHex,
-          fountainAuxColor: scannedHex
+          circleColor: scannedColor,
+          fountainColor: scannedColor,
+          fountainAuxColor: scannedColor
         }));
-        showToast(`🎨 Scanned color ${scannedHex.toUpperCase()} from sensor!`);
-      } else {
-        showToast('⚠️ No color reading available from sensor yet.');
       }
-    } catch (err) {
-      console.warn('Error during scan:', err);
-      showToast('⚠️ Could not connect to sensor.');
+    } finally {
+      setSourceChanging(false);
     }
+  };
+
+  const handlePickerChange = ({ r, g, b }) => {
+    const selectedColor = rgbToHex(r, g, b);
+    setCurrentColor(selectedColor);
+    setAppState((prev) => ({
+      ...prev,
+      circleColor: selectedColor,
+      fountainColor: selectedColor,
+      fountainAuxColor: selectedColor
+    }));
   };
 
   // Mode Selection Handler
@@ -132,37 +166,11 @@ export default function LightAndColor({ appState, setAppState, showToast }) {
       }));
     } else if (modeId === 'Colorful') {
       setAppState((prev) => ({ ...prev, lightingMode: 'Colorful', soundReactiveOn: false, ambientSensorOn: false }));
-      setIsColorsOpen(false);
     } else if (modeId === 'Sound Reactive') {
       setAppState((prev) => ({ ...prev, lightingMode: 'Sound Reactive', soundReactiveOn: true, ambientSensorOn: false }));
     } else if (modeId === 'Color Adaptive') {
       setAppState((prev) => ({ ...prev, lightingMode: 'Color Adaptive', soundReactiveOn: false, ambientSensorOn: true }));
     }
-  };
-
-  // Apply Color to Target Handler: 'all', 'left_fountain', 'right_fountain', 'center'
-  const applyColorToTarget = (target) => {
-    let toastMsg = '';
-    setAppState((prev) => {
-      const next = { ...prev };
-      if (target === 'all') {
-        next.circleColor = currentColor;
-        next.fountainColor = currentColor;
-        next.fountainAuxColor = currentColor;
-        toastMsg = `✨ Applied ${currentColor.toUpperCase()} to ALL!`;
-      } else if (target === 'left_fountain') {
-        next.fountainColor = currentColor;
-        toastMsg = `✨ Applied ${currentColor.toUpperCase()} to Left Fountain!`;
-      } else if (target === 'right_fountain') {
-        next.fountainAuxColor = currentColor;
-        toastMsg = `✨ Applied ${currentColor.toUpperCase()} to Right Fountain!`;
-      } else if (target === 'center') {
-        next.circleColor = currentColor;
-        toastMsg = `✨ Applied ${currentColor.toUpperCase()} to the Center!`;
-      }
-      return next;
-    });
-    showToast(toastMsg);
   };
 
   return (
@@ -270,13 +278,10 @@ export default function LightAndColor({ appState, setAppState, showToast }) {
           </div>
         )}
 
-        {/* Colorful Mode: Color Control & Detection Sub-Card */}
+        {/* Colorful Mode: choose automatic scanning or manual color picking */}
         {lightingMode === 'Colorful' && (
-          <div className={`control-card mt-2 ${isColorsOpen ? 'expanded' : 'collapsed'} color-collapsible-card`}>
-            <div
-              className="card-header color-accordion-header"
-              onClick={() => setIsColorsOpen(!isColorsOpen)}
-            >
+          <div className="control-card mt-2 color-collapsible-card">
+            <div className="card-header">
               <div className="card-title-group">
                 <div className="icon-badge amber">
                   <Palette size={20} />
@@ -286,77 +291,64 @@ export default function LightAndColor({ appState, setAppState, showToast }) {
                     <h3 className="card-title">Color Control</h3>
                     <span
                       className="color-mini-swatch"
-                      style={{ backgroundColor: currentColor }}
+                      style={{ backgroundColor: colorScanMode && colorTelemetry.connected
+                        ? rgbToHex(colorTelemetry.r, colorTelemetry.g, colorTelemetry.b)
+                        : currentColor }}
                       title={currentColor}
                     />
                     <span className="hex-mini-tag">{(currentColor || '').toUpperCase()}</span>
                   </div>
                   <span className="card-status-subtext">
-                    {isColorsOpen ? 'Pick a color and apply it to a lighting zone' : 'Tap to open color tools'}
+                    Select automatic color scanning or use the hue picker.
                   </span>
-                </div>
-              </div>
-              <div className="header-right-action">
-                <div className={`dropdown-toggle-pill ${isColorsOpen ? 'active' : ''}`}>
-                  <span>{isColorsOpen ? 'Close' : 'Choose'}</span>
-                  {isColorsOpen ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
                 </div>
               </div>
             </div>
 
-            {isColorsOpen && (
-              <div className="color-collapsible-body">
-                <ColorPicker rgb={activeRgb} onChange={handlePickerChange} />
-
-                <div className="detected-color-row">
-                  <span className="detected-color-status">
-                    <span
-                      className="color-mini-swatch"
-                      style={{ backgroundColor: colorTelemetry.connected
-                        ? rgbToHex(colorTelemetry.r, colorTelemetry.g, colorTelemetry.b)
-                        : colorTelemetry.scanning ? '#f59e0b' : '#e2e8f0' }}
-                    />
-                    {colorTelemetry.connected
-                      ? `Sensor reading ${rgbToHex(colorTelemetry.r, colorTelemetry.g, colorTelemetry.b).toUpperCase()}`
-                      : colorTelemetry.scanning ? 'Scanning for a color reading…' : 'Waiting for a color reading…'}
-                  </span>
-                  <button
-                    type="button"
-                    className="btn-amber-sensor"
-                    onClick={handleScanSensorColor}
-                    title="Capture live sensor color and apply to Diorama"
-                  >
-                    <Scan size={14} style={{ marginRight: 6 }} />
-                    Scan Color
-                  </button>
-                </div>
-
-                <div className="color-card-footer" style={{ marginTop: 14 }}>
-                  <div className="hex-display-group">
-                    <span className="hex-label">HEX: </span>
-                    <span className="hex-display">{(currentColor || '').toUpperCase()}</span>
-                  </div>
-                </div>
-
-                <div className="apply-targets-section">
-                  <span className="apply-targets-header">APPLY COLOR TO:</span>
-                  <div className="apply-targets-grid">
-                    <button className="btn-target-apply" onClick={() => applyColorToTarget('all')}>
-                      <span className="target-title">ALL</span>
-                    </button>
-                    <button className="btn-target-apply" onClick={() => applyColorToTarget('left_fountain')}>
-                      <span className="target-title">Left Fountain</span>
-                    </button>
-                    <button className="btn-target-apply" onClick={() => applyColorToTarget('right_fountain')}>
-                      <span className="target-title">Right Fountain</span>
-                    </button>
-                    <button className="btn-target-apply" onClick={() => applyColorToTarget('center')}>
-                      <span className="target-title">The Center</span>
-                    </button>
-                  </div>
-                </div>
+            <div className="color-collapsible-body">
+              <div className="color-source-control" role="group" aria-label="Custom color source">
+                <button
+                  type="button"
+                  className={`color-source-option ${colorScanMode ? 'active' : ''}`}
+                  aria-pressed={colorScanMode}
+                  disabled={sourceChanging}
+                  onClick={() => handleColorSourceChange(true)}
+                >
+                  Color Scan
+                </button>
+                <button
+                  type="button"
+                  className={`color-source-option ${!colorScanMode ? 'active' : ''}`}
+                  aria-pressed={!colorScanMode}
+                  disabled={sourceChanging}
+                  onClick={() => handleColorSourceChange(false)}
+                >
+                  Hue Picker
+                </button>
               </div>
-            )}
+
+              <div className="detected-color-row">
+                <span className="detected-color-status">
+                  <span
+                    className="color-mini-swatch"
+                    style={{ backgroundColor: colorScanMode && colorTelemetry.connected
+                      ? rgbToHex(colorTelemetry.r, colorTelemetry.g, colorTelemetry.b)
+                      : currentColor }}
+                  />
+                  {colorScanMode
+                    ? colorTelemetry.connected
+                      ? `Scanning ${rgbToHex(colorTelemetry.r, colorTelemetry.g, colorTelemetry.b).toUpperCase()}`
+                      : 'Waiting for color sensor reading…'
+                    : `Picker color ${currentColor.toUpperCase()} — applied to all zones`}
+                </span>
+                <span className="hex-display">{(currentColor || '').toUpperCase()}</span>
+              </div>
+              {colorScanMode
+                ? <p className="card-description-subtext mt-1">
+                    The latest sensor color is held and applied to all three zones until the next reading.
+                  </p>
+                : <ColorPicker rgb={hexToRgb(currentColor)} onChange={handlePickerChange} />}
+            </div>
           </div>
         )}
 

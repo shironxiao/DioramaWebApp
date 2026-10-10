@@ -1,4 +1,4 @@
-﻿/*
+/*
   Silvestre del Moro Park — Diorama Controller v4
   ESP32 + ILI9488 480×320 + XPT2046 touch + rotary encoder + WiFi HTTP server
 
@@ -10,7 +10,9 @@
   Touch        : XPT2046 shares SPI; T_CLK 18, T_DIN 23, T_DO 19, T_CS 21
   Note         : Leave ILI9488 SDO disconnected; only XPT2046 T_DO connects to GPIO 19.
   Rotary      : CLK 25, DT 26, SW 27
-  SD/I2S      : Temporarily disabled; GPIO 25-27 are reserved for the encoder.
+  TB6612FNG   : PWMA + PWMB -> GPIO 13 (shared pump speed); AIN1/BIN1 -> 3V3,
+                AIN2/BIN2 -> GND, STBY -> 3V3. Use an external pump supply.
+  SD/I2S      : Temporarily disabled; SD pin assignments need review before enabling.
   Mic         : GPIO 35  (ADC1 input-only analog; SD is disabled)
   RGB LEDs    : red disabled (GPIO 4 is TFT reset), G=5, B=12
   Shared I2C bus: ESP32 SDA=32, SCL=33 -> VEML7700 and PCA9685 SDA/SCL
@@ -27,6 +29,7 @@
   GET /api/light?state=on|off&brightness=0-100
   GET /api/mode?mode=Basic|Colorful|Custom+Color|Sound+Reactive|Color+Adaptive
   GET /api/color?r=0-255&g=0-255&b=0-255&target=left|right|center|all
+  GET /api/color/source?mode=scan|picker
   GET /api/fountain?state=on|off&strength=0-100&auxStrength=0-100
   GET /api/drainage-pump?state=on|off
   GET /api/gate?state=open|closed
@@ -53,6 +56,7 @@ enum EncoderControl {
   ENC_CONTROL_LIGHT_MODE,
   ENC_CONTROL_LIGHT_POWER,
   ENC_CONTROL_BRIGHTNESS,
+  ENC_CONTROL_COLOR_SOURCE,
   ENC_CONTROL_HUE,
   ENC_CONTROL_SATURATION,
   ENC_CONTROL_SENSITIVITY,
@@ -60,10 +64,6 @@ enum EncoderControl {
   ENC_CONTROL_AUDIO_PREVIOUS,
   ENC_CONTROL_AUDIO_PLAY,
   ENC_CONTROL_AUDIO_NEXT,
-  ENC_CONTROL_COLOR_ALL,
-  ENC_CONTROL_COLOR_LEFT,
-  ENC_CONTROL_COLOR_RIGHT,
-  ENC_CONTROL_COLOR_CENTER,
   ENC_CONTROL_SETTINGS_ENROLL,
   ENC_CONTROL_SETTINGS_DELETE_0,
   ENC_CONTROL_SETTINGS_DELETE_1,
@@ -111,7 +111,7 @@ struct FingerprintUser {
 #define SD_SCK    14
 #define SD_MISO   35  // Conflicts with MIC_PIN; reassign before enabling SD/audio.
 #define SD_MOSI  25  // Unused while SD_AUDIO_ENABLED is false; reassign before enabling.
-#define SD_CS     13
+#define SD_CS     13  // Conflicts with shared pump PWM; reassign before enabling SD.
 #define I2S_BCLK  26  // Unused while SD_AUDIO_ENABLED is false; reassign before enabling.
 #define I2S_LRC   27  // Unused while SD_AUDIO_ENABLED is false; reassign before enabling.
 #define I2S_DOUT  22  // Audio is disabled; color UART is receive-only.
@@ -131,7 +131,7 @@ constexpr bool SD_AUDIO_ENABLED = false;
 #define COLOR_SENSOR_BAUD   9600
 #define COLOR_SENSOR_TIMEOUT_MS 5000
 #define COLOR_SENSOR_INVERTED_PWM false // Nano sends direct color values (255=Bright, 0=Dark)
-#define FOUNTAIN_PIN 2
+constexpr uint8_t PUMP_PWM_PIN = 13;
 
 // Fingerprint sensor pins (UART2)
 #define FP_RX_PIN    16
@@ -144,6 +144,48 @@ constexpr bool SD_AUDIO_ENABLED = false;
 // User data file
 #define USERS_FILE "/fingerprint_users.json"
 #define MAX_USERS 50
+
+// ── Motor Driver for Inner Circle (Reference from MotorDriverTest.ino) ────────
+// Motor A: IN1=GPIO13, IN2=GPIO14 | Motor B: IN3=GPIO16, IN4=GPIO17
+constexpr uint8_t MAIN_IN1_PIN = 13;
+constexpr uint8_t MAIN_IN2_PIN = 14;
+constexpr uint8_t MAIN_IN3_PIN = 16;
+constexpr uint8_t MAIN_IN4_PIN = 17;
+
+bool mainMotorHardwareEnabled = false; // Enabled if wired directly to Main ESP; Slave ESP32 drives dedicated pins
+bool innerCircleMotorRunning = false;
+uint32_t lastSoundDetectedMs = 0;
+constexpr uint32_t SOUND_MOTOR_HOLD_MS = 600; // Keep rotating smoothly across audio pulses
+
+void stopMotors() {
+  if (mainMotorHardwareEnabled) {
+    digitalWrite(MAIN_IN1_PIN, LOW);
+    digitalWrite(MAIN_IN2_PIN, LOW);
+    digitalWrite(MAIN_IN3_PIN, LOW);
+    digitalWrite(MAIN_IN4_PIN, LOW);
+  }
+  innerCircleMotorRunning = false;
+}
+
+void runMotorA(bool forward = true) {
+  if (mainMotorHardwareEnabled) {
+    digitalWrite(MAIN_IN1_PIN, forward ? HIGH : LOW);
+    digitalWrite(MAIN_IN2_PIN, forward ? LOW : HIGH);
+  }
+}
+
+void runMotorB(bool forward = true) {
+  if (mainMotorHardwareEnabled) {
+    digitalWrite(MAIN_IN3_PIN, forward ? HIGH : LOW);
+    digitalWrite(MAIN_IN4_PIN, forward ? LOW : HIGH);
+  }
+}
+
+void runInnerCircle(bool forward = true) {
+  runMotorA(forward);
+  runMotorB(forward);
+  innerCircleMotorRunning = true;
+}
 
 // ── Objects ───────────────────────────────────────────────────────────────────
 TFT_eSPI   tft = TFT_eSPI();
@@ -225,16 +267,23 @@ bool    soundReactive = false;
 
 // Color zones (left, right, center)  — index 0=left 1=right 2=center
 RGB     zone[3]     = { {255,255,255}, {255,255,255}, {255,255,255} };
-// Working colour for the Custom Color mode picker
-int     hue = 36, sat = 46;
 RGB     cur = {255, 255, 255};
-int     lastApplied = -1; // 0=ALL 1=Left 2=Right 3=Center
+int     hue = 36, sat = 46;
+bool    colorScanMode = true;
 
 // Fountain
 bool    fountainOn  = false;
 int     fountainStr = 100;  // 0-100
-int     fountainAux = 75;   // 0-100
+int     fountainAux = 100;  // Mirrors shared speed for compatibility with the UI state.
 bool    drainagePumpOn = false; // Software state only until a hardware pin is assigned.
+
+int fountainPumpDuty() {
+  return fountainOn ? fountainStr * 255 / 100 : 0;
+}
+
+void applyFountainPumpOutput() {
+  analogWrite(PUMP_PWM_PIN, fountainPumpDuty());
+}
 
 // Gate
 bool    gateOpen    = false;
@@ -291,6 +340,7 @@ bool ambientSensorConfigured = false;
 float ambientLux = 0.0f;
 RGB detectedColor = {255, 255, 255};
 uint32_t colorSensorLastPacketMs = 0;
+uint32_t lastColorAutoApplyMs = 0;
 uint32_t ambientLastDrawMs = 0;
 
 bool wasTouched = false;
@@ -301,6 +351,7 @@ bool touchCalibrationReady = false;
 void txt(const char* s, int x, int y, int font, uint16_t fg, uint16_t bg, uint8_t datum = TL_DATUM);
 void drawColorPanel();
 void applyScannedColor();
+void rgbToHsvValues(uint8_t r, uint8_t g, uint8_t b, int* h, int* s);
 void drawGateScreen();
 void enterGateState(GateState s);
 void drawHeader();
@@ -314,7 +365,6 @@ void sendSlaveRGB(uint8_t group, RGB col, int br);
 void pollEncoder();
 void applyEncoderStep(int direction);
 void syncEncoderControlIndex();
-void applyColorZone(uint8_t zoneIndex);
 void selectEncoderControl(EncoderControl control);
 void IRAM_ATTR encoderQuadratureISR();
 void startEnrollment();
@@ -381,12 +431,13 @@ void sendSlaveRGB(uint8_t group, RGB col, int br) {
 
   const RGB out = slaveRgbForMode(col);
   const char* mode = slaveModeTag();
+  const int soundDetected = (lightMode == "Sound Reactive" && micDetected && micLevel > 0) ? 1 : 0;
 
-  char url[192];
+  char url[220];
   if (lightsOn) {
     snprintf(url, sizeof(url),
-             "GET /rgb?group=%s&r=%d&g=%d&b=%d&brightness=%d&mode=%s HTTP/1.0\r\nHost: " SLAVE_IP "\r\nConnection: close\r\n\r\n",
-             grpStr, out.r, out.g, out.b, br, mode);
+             "GET /rgb?group=%s&r=%d&g=%d&b=%d&brightness=%d&mode=%s&sound=%d HTTP/1.0\r\nHost: " SLAVE_IP "\r\nConnection: close\r\n\r\n",
+             grpStr, out.r, out.g, out.b, br, mode, soundDetected);
   } else {
     snprintf(url, sizeof(url),
              "GET /off?mode=%s HTTP/1.0\r\nHost: " SLAVE_IP "\r\nConnection: close\r\n\r\n",
@@ -564,30 +615,27 @@ int parseColorSensorPacket(const char* packet, RGB* color) {
 }
 
 void updateColorSensorScanForMode() {
-  if (lightMode == "Colorful") {
+  if (lightMode == "Colorful" && colorScanMode) {
     if (!colorSensorScanning) {
       colorSensorScanning = true;
-      colorSensorAvailable = false;
       colorSensorReceiveSeen = false;
-      detectedColor = {255, 255, 255};
       colorSensorLastPacketMs = millis();
       Serial.println("[COLOR UART] Scan started automatically in Custom Color mode");
+      if (colorSensorAvailable) applyScannedColor();
     }
   } else if (colorSensorScanning) {
     colorSensorScanning = false;
-    colorSensorAvailable = false;
-    detectedColor = {255, 255, 255};
-    Serial.println("[COLOR UART] Scan stopped outside Custom Color mode");
+    Serial.println("[COLOR UART] Automatic color application stopped");
   }
 }
 
 void rgbToHsvValues(uint8_t r, uint8_t g, uint8_t b, int* h, int* s) {
-  float rf = r / 255.0f;
-  float gf = g / 255.0f;
-  float bf = b / 255.0f;
-  float maxVal = fmaxf(rf, fmaxf(gf, bf));
-  float minVal = fminf(rf, fminf(gf, bf));
-  float delta = maxVal - minVal;
+  const float rf = r / 255.0f;
+  const float gf = g / 255.0f;
+  const float bf = b / 255.0f;
+  const float maxVal = fmaxf(rf, fmaxf(gf, bf));
+  const float minVal = fminf(rf, fminf(gf, bf));
+  const float delta = maxVal - minVal;
 
   if (delta < 0.0001f) {
     *h = 0;
@@ -595,23 +643,11 @@ void rgbToHsvValues(uint8_t r, uint8_t g, uint8_t b, int* h, int* s) {
     return;
   }
 
-  if (maxVal > 0.0f) {
-    *s = (int)((delta / maxVal) * 100.0f);
-  } else {
-    *s = 0;
-    *h = 0;
-    return;
-  }
-
-  float hueVal = 0.0f;
-  if (rf >= maxVal) {
-    hueVal = (gf - bf) / delta;
-  } else if (gf >= maxVal) {
-    hueVal = 2.0f + (bf - rf) / delta;
-  } else {
-    hueVal = 4.0f + (rf - gf) / delta;
-  }
-
+  *s = (int)((delta / maxVal) * 100.0f);
+  float hueVal;
+  if (rf >= maxVal) hueVal = (gf - bf) / delta;
+  else if (gf >= maxVal) hueVal = 2.0f + (bf - rf) / delta;
+  else hueVal = 4.0f + (rf - gf) / delta;
   hueVal *= 60.0f;
   if (hueVal < 0.0f) hueVal += 360.0f;
   *h = constrain((int)hueVal, 0, 359);
@@ -619,19 +655,21 @@ void rgbToHsvValues(uint8_t r, uint8_t g, uint8_t b, int* h, int* s) {
 }
 
 void applyScannedColor() {
-  // Scanned colors only apply in Custom Color mode — never override Basic white
-  // or Sound/Adaptive live output.
-  if (lightMode != "Colorful") {
-    Serial.printf("[COLOR SCAN] Ignored (mode=%s); only Custom Color applies scans\n",
-                  lightMode.c_str());
+  // Scanned colors only apply when automatic color scan is selected.
+  if (lightMode != "Colorful" || !colorScanMode) {
+    Serial.printf("[COLOR SCAN] Ignored (mode=%s scanMode=%s)\n",
+                  lightMode.c_str(), colorScanMode ? "scan" : "picker");
     return;
   }
   cur = detectedColor;
   rgbToHsvValues(cur.r, cur.g, cur.b, &hue, &sat);
+  const bool zonesChanged =
+    zone[0].r != cur.r || zone[0].g != cur.g || zone[0].b != cur.b ||
+    zone[1].r != cur.r || zone[1].g != cur.g || zone[1].b != cur.b ||
+    zone[2].r != cur.r || zone[2].g != cur.g || zone[2].b != cur.b;
   zone[0] = zone[1] = zone[2] = cur;
-  lastApplied = 0;
-  pushZones();
-  if (page == P_LIGHTS && tftMode == M_COLOR) {
+  if (zonesChanged) pushZones();
+  if (page == P_LIGHTS && tftMode == M_COLOR && zonesChanged) {
     drawColorPanel();
   }
   Serial.printf("[COLOR SCAN] Captured & Applied RGB=%u,%u,%u (#%02X%02X%02X)\n",
@@ -650,6 +688,7 @@ void processColorSensorColor(const RGB& raw) {
 #endif
 
   detectedColor = received;
+  const bool wasAvailable = colorSensorAvailable;
   colorSensorAvailable = true;
   colorSensorLastPacketMs = millis();
 
@@ -662,14 +701,14 @@ void processColorSensorColor(const RGB& raw) {
                   detectedColor.r, detectedColor.g, detectedColor.b);
   }
 
-  // Update sensor swatch live on TFT when viewing the Custom Color panel
-  if (page == P_LIGHTS && tftMode == M_COLOR) {
-    tft.fillRect(240, BODY_Y + 170 - 2, 100, 20, C_BG);
-    tft.fillRoundRect(240, BODY_Y + 170 - 2, 26, 18, 4, c565(detectedColor));
-    tft.drawRoundRect(240, BODY_Y + 170 - 2, 26, 18, 4, C_TEXT);
-    char sHex[8];
-    snprintf(sHex, sizeof(sHex), "#%02X%02X%02X", detectedColor.r, detectedColor.g, detectedColor.b);
-    txt(sHex, 272, BODY_Y + 170 + 2, 2, C_GREEN, C_BG, TL_DATUM);
+  // Limit network updates while keeping the automatic color response live.
+  const uint32_t now = millis();
+  if (lightMode == "Colorful" && colorScanMode &&
+      (lastColorAutoApplyMs == 0 || now - lastColorAutoApplyMs >= 250)) {
+    lastColorAutoApplyMs = now;
+    applyScannedColor();
+  } else if (!wasAvailable && page == P_LIGHTS && tftMode == M_COLOR) {
+    drawColorPanel();
   }
 }
 
@@ -1371,6 +1410,7 @@ void enterGateState(GateState s) {
       gateOpen = false;
       lightsOn = false;
       fountainOn = false;
+      applyFountainPumpOutput();
       matchedUserName[0] = '\0';
       applyHardwareGate(false);
       pushZones();
@@ -1501,79 +1541,56 @@ void drawBrightnessRow() {
   }
 }
 
-// ── Custom Color panel ────────────────────────────────────────────────────────
-//
-//  py+0   : "Color:" swatch and hex, plus live ambient lux
-//  py+20  : Hue gradient slider
-//  py+44  : "Sat" label + value
-//  py+56  : Saturation gradient slider
-//  py+76  : Apply-zone buttons  [ALL] [Left] [Right] [Center]
-//
+// ── Custom Color source and controls ──────────────────────────────────────────
 void drawColorPanel() {
   int py = BODY_Y + 170;
   tft.fillRect(0, py, W, H - py, C_BG);
 
-  // ── Colour preview + hex ──────────────────────────────────────────────────
-  label("Color:", SL_X0, py + 2);
-  tft.fillRoundRect(65, py - 2, 28, 18, 4, c565(cur));
-  tft.drawRoundRect(65, py - 2, 28, 18, 4, C_TEXT);
+  label("Color source:", SL_X0, py + 2);
+  btn(330, py, 140, 24, colorScanMode ? "COLOR SCAN" : "HUE PICKER",
+      !colorScanMode, C_AMBER, 1);
+  drawFocusCue(330, py, 140, 24, 7, false);
+  drawEncoderFocusCue(330, py, 140, 24,
+                      encoderControl == ENC_CONTROL_COLOR_SOURCE);
+
+  tft.fillRoundRect(10, py + 27, 28, 18, 4, c565(cur));
+  tft.drawRoundRect(10, py + 27, 28, 18, 4, C_TEXT);
   char hex[8]; snprintf(hex, sizeof(hex), "#%02X%02X%02X", cur.r, cur.g, cur.b);
-  txt(hex, 98, py + 2, 2, C_TEXT, C_BG, TL_DATUM);
+  txt(hex, 44, py + 31, 2, C_TEXT, C_BG, TL_DATUM);
 
-  // ── Live sensor reading preview ───────────────────────────────────────────
-  label("Sensor:", 185, py + 2);
-  tft.fillRoundRect(240, py - 2, 26, 18, 4, colorSensorAvailable ? c565(detectedColor) : C_TRACK);
-  tft.drawRoundRect(240, py - 2, 26, 18, 4, C_TEXT);
-  char sHex[8]; snprintf(sHex, sizeof(sHex), "#%02X%02X%02X", detectedColor.r, detectedColor.g, detectedColor.b);
-  txt(colorSensorAvailable ? sHex : "---", 270, py + 2, 2, colorSensorAvailable ? C_GREEN : C_DIM, C_BG, TL_DATUM);
-
-  // ── Scan Color Button ─────────────────────────────────────────────────────
-  btn(345, py - 4, 115, 24, "SCAN COLOR", false, C_AMBER, 1);
-
-  // ── Hue gradient slider ───────────────────────────────────────────────────
-  label("Hue", SL_X0, py + 22);
-  for (int x = SL_X0; x < SL_X1; x += 3) {
-    int h = (long)(x - SL_X0) * 359 / (SL_X1 - SL_X0);
-    RGB c = hsv(h, 100, 100);
-    tft.fillRect(x, py + 32, 3, 8, c565(c));
+  if (colorScanMode) {
+    label(colorSensorAvailable ? "Latest sensor color applied to all zones"
+                               : "Waiting for color sensor reading...",
+          SL_X0, py + 66);
+    return;
   }
-  tft.drawRect(SL_X0, py + 32, SL_X1 - SL_X0, 8, C_BORDER);
-  int hkx = SL_X0 + (long)(SL_X1 - SL_X0) * hue / 359;
-  tft.fillCircle(hkx, py + 36, 10, c565(hsv(hue, 100, 100)));
-  tft.drawCircle(hkx, py + 36, 10, C_TEXT);
-  drawFocusCue(SL_X0, py + 22, SL_X1 - SL_X0, 24, 7, false);
-  drawEncoderFocusCue(SL_X0, py + 22, SL_X1 - SL_X0, 24,
+
+  label("Hue", SL_X0, py + 52);
+  for (int x = SL_X0; x < SL_X1; x += 3) {
+    const int value = (long)(x - SL_X0) * 359 / (SL_X1 - SL_X0);
+    tft.fillRect(x, py + 62, 3, 8, c565(hsv(value, 100, 100)));
+  }
+  tft.drawRect(SL_X0, py + 62, SL_X1 - SL_X0, 8, C_BORDER);
+  const int hueX = SL_X0 + (long)(SL_X1 - SL_X0) * hue / 359;
+  tft.fillCircle(hueX, py + 66, 9, c565(hsv(hue, 100, 100)));
+  tft.drawCircle(hueX, py + 66, 9, C_TEXT);
+  drawFocusCue(SL_X0, py + 52, SL_X1 - SL_X0, 24, 8, false);
+  drawEncoderFocusCue(SL_X0, py + 52, SL_X1 - SL_X0, 24,
                       encoderControl == ENC_CONTROL_HUE);
 
-  // ── Saturation gradient slider ────────────────────────────────────────────
-  label("Sat", SL_X0, py + 50);
-  drawPct(W - 10, py + 50, sat, C_DIM);
+  label("Saturation", SL_X0, py + 78);
+  drawPct(W - 10, py + 78, sat, C_DIM);
   for (int x = SL_X0; x < SL_X1; x += 3) {
-    int s = (long)(x - SL_X0) * 100 / (SL_X1 - SL_X0);
-    RGB c = hsv(hue, s, 100);
-    tft.fillRect(x, py + 60, 3, 8, c565(c));
+    const int value = (long)(x - SL_X0) * 100 / (SL_X1 - SL_X0);
+    tft.fillRect(x, py + 88, 3, 8, c565(hsv(hue, value, 100)));
   }
-  tft.drawRect(SL_X0, py + 60, SL_X1 - SL_X0, 8, C_BORDER);
-  int skx = SL_X0 + (long)(SL_X1 - SL_X0) * sat / 100;
-  tft.fillCircle(skx, py + 64, 10, c565(cur));
-  tft.drawCircle(skx, py + 64, 10, C_TEXT);
-  drawFocusCue(SL_X0, py + 50, SL_X1 - SL_X0, 24, 8, false);
-  drawEncoderFocusCue(SL_X0, py + 50, SL_X1 - SL_X0, 24,
+  tft.drawRect(SL_X0, py + 88, SL_X1 - SL_X0, 8, C_BORDER);
+  const int satX = SL_X0 + (long)(SL_X1 - SL_X0) * sat / 100;
+  tft.fillCircle(satX, py + 92, 9, c565(cur));
+  tft.drawCircle(satX, py + 92, 9, C_TEXT);
+  drawFocusCue(SL_X0, py + 78, SL_X1 - SL_X0, 24, 9, false);
+  drawEncoderFocusCue(SL_X0, py + 78, SL_X1 - SL_X0, 24,
                       encoderControl == ENC_CONTROL_SATURATION);
-
-  // ── Apply-zone buttons ────────────────────────────────────────────────────
-  const char* zn[4] = { "ALL", "Left", "Right", "Center" };
-  for (int i = 0; i < 4; i++) {
-    bool act = (lastApplied == i);
-    btn(4 + i * 119, py + 80, 115, 32, zn[i], act, C_AMBER);
-    drawFocusCue(4 + i * 119, py + 80, 115, 32, i + 9, false);
-    const EncoderControl zoneControls[4] = {
-      ENC_CONTROL_COLOR_ALL, ENC_CONTROL_COLOR_LEFT,
-      ENC_CONTROL_COLOR_RIGHT, ENC_CONTROL_COLOR_CENTER
-    };
-    drawEncoderFocusCue(4 + i * 119, py + 80, 115, 32,
-                        encoderControl == zoneControls[i]);
-  }
 }
 
 // Mode-specific lower panel
@@ -1801,12 +1818,11 @@ int getEncoderControls(EncoderControl* controls) {
       controls[count++] = ENC_CONTROL_BRIGHTNESS;
     }
     if (tftMode == M_COLOR) {
-      controls[count++] = ENC_CONTROL_HUE;
-      controls[count++] = ENC_CONTROL_SATURATION;
-      controls[count++] = ENC_CONTROL_COLOR_ALL;
-      controls[count++] = ENC_CONTROL_COLOR_LEFT;
-      controls[count++] = ENC_CONTROL_COLOR_RIGHT;
-      controls[count++] = ENC_CONTROL_COLOR_CENTER;
+      controls[count++] = ENC_CONTROL_COLOR_SOURCE;
+      if (!colorScanMode) {
+        controls[count++] = ENC_CONTROL_HUE;
+        controls[count++] = ENC_CONTROL_SATURATION;
+      }
     } else if (tftMode == M_SOUND) {
       controls[count++] = ENC_CONTROL_SENSITIVITY;
     }
@@ -1868,25 +1884,14 @@ void selectEncoderControl(EncoderControl control) {
   drawHeader();
 }
 
-void applyColorZone(uint8_t zoneIndex) {
-  if (zoneIndex > 3) return;
-  if (lightMode != "Colorful") {
-    Serial.printf("[COLOR] Ignored apply (mode=%s); Custom Color only\n", lightMode.c_str());
-    return;
-  }
-  if (zoneIndex == 0) zone[0] = zone[1] = zone[2] = cur;
-  else zone[zoneIndex - 1] = cur;
-  lastApplied = zoneIndex;
-  lightsOn = true;
-  pushZones();
-  const char* zoneNames[4] = { "ALL", "Left", "Right", "Center" };
-  Serial.printf("[COLOR] Applied #%02X%02X%02X to %s\n",
-                cur.r, cur.g, cur.b, zoneNames[zoneIndex]);
-  drawColorPanel();
-}
-
 void activateEncoderControl() {
   switch (encoderControl) {
+    case ENC_CONTROL_COLOR_SOURCE:
+      colorScanMode = !colorScanMode;
+      updateColorSensorScanForMode();
+      drawColorPanel();
+      syncEncoderControlIndex();
+      break;
     case ENC_CONTROL_LIGHT_POWER:
       lightsOn = !lightsOn;
       pushZones();
@@ -1904,18 +1909,6 @@ void activateEncoderControl() {
     case ENC_CONTROL_AUDIO_NEXT:
       stepTrack(1);
       if (page == P_AUDIO) drawAudio();
-      break;
-    case ENC_CONTROL_COLOR_ALL:
-      applyColorZone(0);
-      break;
-    case ENC_CONTROL_COLOR_LEFT:
-      applyColorZone(1);
-      break;
-    case ENC_CONTROL_COLOR_RIGHT:
-      applyColorZone(2);
-      break;
-    case ENC_CONTROL_COLOR_CENTER:
-      applyColorZone(3);
       break;
     case ENC_CONTROL_SETTINGS_ENROLL:
       startEnrollment();
@@ -2047,14 +2040,20 @@ void applyEncoderStep(int direction) {
       break;
 
     case ENC_CONTROL_HUE:
+      if (colorScanMode) break;
       hue = constrain(hue + direction * 6, 0, 359);
       cur = hsv(hue, sat, 100);
+      zone[0] = zone[1] = zone[2] = cur;
+      pushZones();
       drawColorPanel();
       break;
 
     case ENC_CONTROL_SATURATION:
+      if (colorScanMode) break;
       sat = constrain(sat + direction * 5, 0, 100);
       cur = hsv(hue, sat, 100);
+      zone[0] = zone[1] = zone[2] = cur;
+      pushZones();
       drawColorPanel();
       break;
 
@@ -2335,9 +2334,12 @@ void updateLive() {
   if (millis() - last < 40) return;
   last = millis();
 
-  // Only Sound Reactive may animate RGB. Basic stays white; Custom/Adaptive are steady.
+  // Only Sound Reactive may animate RGB & rotate inner circle. Basic stays white; Custom/Adaptive are steady.
   if (lightMode != "Sound Reactive" || !lightsOn) {
     lvl = 0;
+    if (innerCircleMotorRunning) {
+      stopMotors();
+    }
     return;
   }
 
@@ -2345,9 +2347,19 @@ void updateLive() {
     lvl     = max(micLevel / 1023.0f, lvl * 0.82f);
     hueBase = (hueBase + 2) % 360;
     live    = hsv((hueBase + (int)(lvl * 120)) % 360, 100, 12 + (int)(88 * lvl));
+    lastSoundDetectedMs = millis();
+    if (!innerCircleMotorRunning) {
+      runInnerCircle(true);
+      Serial.println("[MOTOR] Sound detected -> Inner Circle rotating");
+    }
     setAll(live);
   } else {
     lvl = 0;
+    if (innerCircleMotorRunning && (millis() - lastSoundDetectedMs >= SOUND_MOTOR_HOLD_MS)) {
+      stopMotors();
+      Serial.println("[MOTOR] Sound paused -> Inner Circle stopped");
+      pushZones();
+    }
   }
   // Refresh level bar if on lights page
   if (page == P_LIGHTS && tftMode == M_SOUND) {
@@ -2595,18 +2607,6 @@ void onPress(int x, int y) {
       return;
     }
 
-    // ── Custom Color mode touch zones (checked BEFORE brightness to avoid overlap) ──
-    if (tftMode == M_COLOR) {
-      int py = BODY_Y + 170;
-
-      // Scan Color button at (345, py-4, 115, 24) — checked first because it
-      // overlaps the bottom of the brightness slider hit zone (BODY_Y+116..+168)
-      if (inRect(x, y, 345, py - 4, 115, 24)) {
-        applyScannedColor();
-        return;
-      }
-    }
-
     // Brightness is adjustable only in Basic and Custom Color modes.
     if (tftMode != M_SOUND && tftMode != M_ADAPT &&
         inRect(x, y, SL_X0, BODY_Y + 116, SL_X1 - SL_X0, 52)) {
@@ -2615,37 +2615,28 @@ void onPress(int x, int y) {
       dragging = D_BR; onDrag(x); return;
     }
 
-    // ── Custom Color mode remaining touch zones ────────────────────────────
+    // Custom Color mode is controlled automatically by the color sensor.
     if (tftMode == M_COLOR) {
-      int py = BODY_Y + 170;
-
-      // Hue slider zone  y = py+24 .. py+48
-      if (inRect(x, y, SL_X0, py + 24, SL_X1 - SL_X0, 24)) {
+      const int py = BODY_Y + 170;
+      if (inRect(x, y, 330, py, 140, 24)) {
+        selectEncoderControl(ENC_CONTROL_COLOR_SOURCE);
+        colorScanMode = !colorScanMode;
+        updateColorSensorScanForMode();
+        drawColorPanel();
+        syncEncoderControlIndex();
+        return;
+      }
+      if (!colorScanMode && inRect(x, y, SL_X0, py + 54, SL_X1 - SL_X0, 24)) {
         selectEncoderControl(ENC_CONTROL_HUE);
-        drawColorPanel();
-        dragging = D_HUE; onDrag(x); return;
+        dragging = D_HUE;
+        onDrag(x);
+        return;
       }
-
-      // Saturation slider zone  y = py+54 .. py+78
-      if (inRect(x, y, SL_X0, py + 54, SL_X1 - SL_X0, 24)) {
+      if (!colorScanMode && inRect(x, y, SL_X0, py + 80, SL_X1 - SL_X0, 24)) {
         selectEncoderControl(ENC_CONTROL_SATURATION);
-        drawColorPanel();
-        dragging = D_SAT; onDrag(x); return;
-      }
-
-      // Apply-zone buttons  y = py+80 .. py+112
-      if (inRect(x, y, 0, py + 80, W, 34)) {
-        for (int i = 0; i < 4; i++) {
-          if (inRect(x, y, 4 + i * 119, py + 80, 115, 32)) {
-            const EncoderControl zoneControls[4] = {
-              ENC_CONTROL_COLOR_ALL, ENC_CONTROL_COLOR_LEFT,
-              ENC_CONTROL_COLOR_RIGHT, ENC_CONTROL_COLOR_CENTER
-            };
-            selectEncoderControl(zoneControls[i]);
-            applyColorZone(i);
-            return;
-          }
-        }
+        dragging = D_SAT;
+        onDrag(x);
+        return;
       }
       return;
     }
@@ -2680,21 +2671,25 @@ void onDrag(int x) {
       break;
 
     case D_HUE: {
-      int h = (long)p * 359 / 100;
-      if (h != hue) {
-        hue = h;
+      if (colorScanMode) break;
+      const int nextHue = (long)p * 359 / 100;
+      if (nextHue != hue) {
+        hue = nextHue;
         cur = hsv(hue, sat, 100);
-        Serial.printf("[COLOR] Hue %d -> #%02X%02X%02X\n", hue, cur.r, cur.g, cur.b);
+        zone[0] = zone[1] = zone[2] = cur;
+        pushZones();
         drawColorPanel();
       }
       break;
     }
 
     case D_SAT:
+      if (colorScanMode) break;
       if (p != sat) {
         sat = p;
         cur = hsv(hue, sat, 100);
-        Serial.printf("[COLOR] Sat %d%% -> #%02X%02X%02X\n", sat, cur.r, cur.g, cur.b);
+        zone[0] = zone[1] = zone[2] = cur;
+        pushZones();
         drawColorPanel();
       }
       break;
@@ -2826,6 +2821,7 @@ void jsonOk(const char* extra = "") {
 void handleLight() {
   if (server.hasArg("state")) {
     lightsOn = (server.arg("state") == "on");
+    if (!lightsOn) stopMotors();
   }
   if (server.hasArg("brightness")) {
     brightness = constrain(server.arg("brightness").toInt(), 0, 100);
@@ -2854,7 +2850,12 @@ void handleMode() {
     else if (lightMode == "Color Adaptive")  tftMode = M_ADAPT;
     else                                     tftMode = M_BASIC;
 
+    if (tftMode != M_SOUND) {
+      stopMotors();
+    }
+
     updateColorSensorScanForMode();
+    syncEncoderControlIndex();
     // Push mode-correct RGB to the slave for every mode change.
     if (tftMode == M_BASIC) {
       soundReactive = false;          // stop any leftover sound-reactive flag
@@ -2893,15 +2894,42 @@ void handleColor() {
   if      (target == "left")   zone[0] = col;
   else if (target == "right")  zone[1] = col;
   else if (target == "center") zone[2] = col;
-  else                         zone[0] = zone[1] = zone[2] = col;
+  else {
+    cur = col;
+    rgbToHsvValues(cur.r, cur.g, cur.b, &hue, &sat);
+    zone[0] = zone[1] = zone[2] = col;
+  }
 
   pushZones();
+  if (page == P_LIGHTS && tftMode == M_COLOR) drawColorPanel();
   jsonOk();
+}
+
+// ── GET /api/color/source?mode=scan|picker ────────────────────────────────────
+void handleColorSource() {
+  if (!server.hasArg("mode") ||
+      (server.arg("mode") != "scan" && server.arg("mode") != "picker")) {
+    server.send(400, "application/json",
+                "{\"error\":\"missing or invalid mode; use mode=scan or mode=picker\"}");
+    return;
+  }
+
+  colorScanMode = server.arg("mode") == "scan";
+  updateColorSensorScanForMode();
+  syncEncoderControlIndex();
+  if (page == P_LIGHTS && tftMode == M_COLOR) {
+    drawColorPanel();
+  }
+  Serial.printf("[COLOR] Source changed to %s\n", colorScanMode ? "scan" : "picker");
+  jsonOk(colorScanMode ? "\"scanMode\":\"scan\"" : "\"scanMode\":\"picker\"");
 }
 
 // ── GET /api/color/scan → triggers color capture from sensor & syncs to zones/TFT ──
 void handleColorScan() {
-  applyScannedColor();
+  colorScanMode = true;
+  updateColorSensorScanForMode();
+  if (colorSensorAvailable) applyScannedColor();
+  if (page == P_LIGHTS && tftMode == M_COLOR) drawColorPanel();
   char buf[128];
   snprintf(buf, sizeof(buf),
     "{\"success\":true,\"r\":%u,\"g\":%u,\"b\":%u,\"hex\":\"#%02X%02X%02X\"}",
@@ -2913,14 +2941,16 @@ void handleColorScan() {
 // ── GET /api/fountain?state=on|off&strength=0-100&auxStrength=0-100 ──────────
 void handleFountain() {
   if (server.hasArg("state"))       fountainOn  = (server.arg("state") == "on");
-  if (server.hasArg("strength"))    fountainStr = constrain(server.arg("strength").toInt(), 0, 100);
-  if (server.hasArg("auxStrength")) fountainAux = constrain(server.arg("auxStrength").toInt(), 0, 100);
+  if (server.hasArg("strength")) {
+    fountainStr = constrain(server.arg("strength").toInt(), 0, 100);
+  } else if (server.hasArg("auxStrength")) {
+    fountainStr = constrain(server.arg("auxStrength").toInt(), 0, 100);
+  }
+  fountainAux = fountainStr;
+  applyFountainPumpOutput();
 
-  Serial.printf("[HTTP /api/fountain] state=%s str=%d aux=%d\n",
-                fountainOn ? "on" : "off", fountainStr, fountainAux);
-
-  // Fountain GPIO — shared with SD MISO; only enable if SD is not active
-  // analogWrite(FOUNTAIN_PIN, fountainOn ? map(fountainStr, 0, 100, 0, 255) : 0);
+  Serial.printf("[PUMPS] state=%s sharedSpeed=%d%% pwm=%d/255\n",
+                fountainOn ? "on" : "off", fountainStr, fountainPumpDuty());
   jsonOk();
 }
 
@@ -3068,16 +3098,36 @@ void handleSoundReactive() {
     tftMode   = M_SOUND;
     updateColorSensorScanForMode();
     if (page == P_LIGHTS && gateState == GS_OPEN) drawLights();
+  } else {
+    stopMotors();
   }
   jsonOk();
 }
 
 // ── GET /api/sound  → {"detected":bool,"level":0-1023} ───────────────────────
 void handleSound() {
-  char buf[128];
-  snprintf(buf, sizeof(buf), "{\"detected\":%s,\"level\":%d,\"rms\":%d,\"peakToPeak\":%d,\"r\":%u,\"g\":%u,\"b\":%u}",
+  char buf[160];
+  snprintf(buf, sizeof(buf), "{\"detected\":%s,\"level\":%d,\"rms\":%d,\"peakToPeak\":%d,\"r\":%u,\"g\":%u,\"b\":%u,\"motorRunning\":%s}",
            micDetected ? "true" : "false", micLevel, micRms, micPeakToPeak,
-           live.r, live.g, live.b);
+           live.r, live.g, live.b, innerCircleMotorRunning ? "true" : "false");
+  server.send(200, "application/json", buf);
+}
+
+// ── GET /api/motor?state=on|off&dir=fwd|rev ──────────────────────────────────
+void handleMotor() {
+  if (server.hasArg("state")) {
+    String st = server.arg("state");
+    bool fwd = server.hasArg("dir") ? (!server.arg("dir").equalsIgnoreCase("rev")) : true;
+    if (st.equalsIgnoreCase("on") || st.equalsIgnoreCase("run") || st == "1") {
+      runInnerCircle(fwd);
+      Serial.println("[HTTP /api/motor] Manual RUN");
+    } else {
+      stopMotors();
+      Serial.println("[HTTP /api/motor] Manual STOP");
+    }
+  }
+  char buf[128];
+  snprintf(buf, sizeof(buf), "{\"ok\":true,\"motorRunning\":%s}", innerCircleMotorRunning ? "true" : "false");
   server.send(200, "application/json", buf);
 }
 
@@ -3101,7 +3151,7 @@ void handleState() {
   char modeEsc[48];
   strlcpy(modeEsc, lightMode.c_str(), sizeof(modeEsc));
 
-  char json[512];
+  char json[560];
   snprintf(json, sizeof(json),
     "{"
     "\"gateOpen\":%s,"
@@ -3119,7 +3169,8 @@ void handleState() {
     "\"audioTrack\":\"%s\","
     "\"fountainColor\":\"%s\","
     "\"fountainAuxColor\":\"%s\","
-    "\"circleColor\":\"%s\""
+    "\"circleColor\":\"%s\","
+    "\"innerCircleMotor\":%s"
     "}",
     gateOpen       ? "true" : "false",
     lightsOn       ? "true" : "false",
@@ -3136,7 +3187,8 @@ void handleState() {
     trackName,
     leftHex,
     rightHex,
-    centerHex
+    centerHex,
+    innerCircleMotorRunning ? "true" : "false"
   );
 
   server.send(200, "application/json", json);
@@ -3157,19 +3209,22 @@ void handleSensors() {
   if (ambientSensorAvailable) snprintf(luxJson, sizeof(luxJson), "%.2f", ambientLux);
   else strlcpy(luxJson, "null", sizeof(luxJson));
 
-  char buf[512];
+  char buf[560];
   snprintf(buf, sizeof(buf),
     "{"
     "\"ambientLight\":{\"connected\":%s,\"lux\":%s,\"brightness\":%d,\"source\":\"VEML7700 I2C\"},"
-    "\"colorSensor\":{\"connected\":%s,\"scanning\":%s,\"r\":%u,\"g\":%u,\"b\":%u,\"source\":\"Serial Color Sensor\"},"
+    "\"colorSensor\":{\"connected\":%s,\"scanning\":%s,\"scanMode\":\"%s\",\"r\":%u,\"g\":%u,\"b\":%u,\"source\":\"Serial Color Sensor\"},"
     "\"mic\":{\"level\":%d,\"percent\":%d,\"rms\":%d,\"peakToPeak\":%d,\"detected\":%s},"
+    "\"innerCircleMotor\":{\"running\":%s},"
     "\"biometric\":{\"state\":\"%s\",\"open\":%s,\"authorized\":%s}"
     "}",
     ambientSensorAvailable ? "true" : "false", luxJson, brightness,
     colorSensorAvailable ? "true" : "false",
     colorSensorScanning ? "true" : "false",
+    colorScanMode ? "scan" : "picker",
     detectedColor.r, detectedColor.g, detectedColor.b,
     micLevel, micPct, micRms, micPeakToPeak, micDetected ? "true" : "false",
+    innerCircleMotorRunning ? "true" : "false",
     gateStateStr,
     gateOpen ? "true" : "false",
     (gateState == GS_OPEN) ? "true" : "false"
@@ -3324,6 +3379,7 @@ void setupRoutes() {
   server.on("/api/light",            HTTP_OPTIONS, handleOptions);
   server.on("/api/mode",             HTTP_OPTIONS, handleOptions);
   server.on("/api/color",            HTTP_OPTIONS, handleOptions);
+  server.on("/api/color/source",     HTTP_OPTIONS, handleOptions);
   server.on("/api/color/scan",       HTTP_OPTIONS, handleOptions);
   server.on("/api/fountain",         HTTP_OPTIONS, handleOptions);
   server.on("/api/drainage-pump",   HTTP_OPTIONS, handleOptions);
@@ -3336,6 +3392,7 @@ void setupRoutes() {
   server.on("/api/audio/files",      HTTP_OPTIONS, handleOptions);
   server.on("/api/sound-reactive",   HTTP_OPTIONS, handleOptions);
   server.on("/api/sound",            HTTP_OPTIONS, handleOptions);
+  server.on("/api/motor",            HTTP_OPTIONS, handleOptions);
   server.on("/api/sensors",          HTTP_OPTIONS, handleOptions);
   server.on("/api/state",            HTTP_OPTIONS, handleOptions);
   server.on("/api/fingerprint/users",   HTTP_OPTIONS, handleOptions);
@@ -3346,6 +3403,7 @@ void setupRoutes() {
   server.on("/api/light",  HTTP_GET, []() { addCORSHeaders(); handleLight();        });
   server.on("/api/mode",   HTTP_GET, []() { addCORSHeaders(); handleMode();         });
   server.on("/api/color",  HTTP_GET, []() { addCORSHeaders(); handleColor();        });
+  server.on("/api/color/source", HTTP_GET, []() { addCORSHeaders(); handleColorSource(); });
   server.on("/api/color/scan", HTTP_GET, []() { addCORSHeaders(); handleColorScan();    });
   server.on("/api/fountain",HTTP_GET,[]() { addCORSHeaders(); handleFountain();     });
   server.on("/api/drainage-pump",HTTP_GET,[]() { addCORSHeaders(); handleDrainagePump(); });
@@ -3358,6 +3416,7 @@ void setupRoutes() {
   server.on("/api/audio/files", HTTP_GET, []() { addCORSHeaders(); handleAudioFiles(); });
   server.on("/api/sound-reactive",HTTP_GET,[]() { addCORSHeaders(); handleSoundReactive(); });
   server.on("/api/sound",  HTTP_GET, []() { addCORSHeaders(); handleSound();        });
+  server.on("/api/motor",  HTTP_GET, []() { addCORSHeaders(); handleMotor();        });
   server.on("/api/sensors",HTTP_GET, []() { addCORSHeaders(); handleSensors();      });
   server.on("/api/state",      HTTP_GET,[]() { addCORSHeaders(); handleState();       });
   
@@ -3594,6 +3653,8 @@ void audioTask(void*) { for (;;) { audio.loop(); vTaskDelay(1); } }
 
 void setup() {
   Serial.begin(115200);
+  pinMode(PUMP_PWM_PIN, OUTPUT);
+  analogWrite(PUMP_PWM_PIN, 0);
   setupEncoder();
   Serial.printf("[ENCODER] CLK=%d DT=%d SW=%d\n",
                 ENCODER_CLK_PIN, ENCODER_DT_PIN, ENCODER_SW_PIN);
@@ -3606,6 +3667,7 @@ void setup() {
 
   pinMode(GREEN_PIN, OUTPUT);
   pinMode(BLUE_PIN, OUTPUT);
+  stopMotors();
   pushZones();
 
   // ── Display ─────────────────────────────────────────────────────────────
